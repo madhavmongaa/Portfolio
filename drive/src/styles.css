@@ -1,0 +1,132 @@
+:root {
+  --ground: #0e0f11;
+  --surface: #141518;
+  --line: #2a2c30;
+  --dim: #8a8f98;
+  --text: #e9e6df;
+  --amber: #e8a33d;
+  --serif: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --pad: clamp(16px, 4vw, 40px);
+}
+
+* { box-sizing: border-box; }
+html { background: var(--ground); color: var(--text); -webkit-text-size-adjust: 100%; }
+body { margin: 0; font-family: var(--serif); font-weight: 350; line-height: 1.5; }
+a { color: inherit; text-decoration-color: var(--amber); text-underline-offset: 0.2em; }
+a:hover { color: var(--amber); }
+:focus-visible { outline: 1px solid var(--amber); outline-offset: 3px; }
+.mono { font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em; }
+h1, h2, p, ol, ul, dl, dd { margin: 0; padding: 0; }
+ol, ul { list-style: none; }
+
+/* ---------- top bar ---------- */
+.bar {
+  position: fixed; inset: 0 0 auto 0; z-index: 5;
+  display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+  padding: calc(env(safe-area-inset-top) + 18px) var(--pad) 18px;
+  pointer-events: none;
+}
+.bar > * { pointer-events: auto; }
+.bar .name { font-size: 19px; letter-spacing: -0.01em; }
+html:not(.drive.ready) .bar { background: linear-gradient(var(--ground) 60%, transparent); }
+
+/* ---------- list view ---------- */
+#list { max-width: 1040px; margin: 0 auto; padding: 120px var(--pad) 96px; }
+html.drive.ready #list { display: none; }
+.intro h1 { font-size: clamp(44px, 9vw, 104px); font-weight: 300; line-height: 0.98; letter-spacing: -0.035em; }
+.intro p { margin-top: 20px; max-width: 34ch; font-size: 20px; color: var(--dim); }
+.index { margin-top: clamp(56px, 10vw, 112px); border-bottom: 1px solid var(--line); }
+.index > li {
+  display: grid; grid-template-columns: 56px minmax(0, 5fr) minmax(0, 7fr); gap: 8px 32px;
+  padding: 36px 0 40px; border-top: 1px solid var(--line);
+}
+.index .n { color: var(--amber); padding-top: 12px; }
+.index h2 { font-size: clamp(28px, 4vw, 40px); font-weight: 350; line-height: 1.1; letter-spacing: -0.02em; }
+.kind { color: var(--dim); margin-top: 6px; }
+.b p, #panel p { font-size: 17px; }
+.b p + p, #panel p + p { margin-top: 12px; }
+.meta { margin-top: 20px; font-family: var(--mono); font-size: 12px; display: flex; gap: 16px; }
+.meta dt { color: var(--dim); flex: none; min-width: 64px; }
+.links { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px 24px; font-family: var(--mono); font-size: 13px; }
+@media (max-width: 720px) {
+  .index > li { grid-template-columns: 40px minmax(0, 1fr); }
+  .index .b { grid-column: 2; margin-top: 12px; }
+}
+
+/* ---------- stage ---------- */
+#stage {
+  position: fixed; inset: 0; opacity: 0; visibility: hidden;
+  transition: opacity 0.9s ease, visibility 0s 0.9s;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+html.drive.ready #stage { opacity: 1; visibility: visible; transition: opacity 0.9s ease; }
+html.drive.ready, html.drive.ready body { overflow: hidden; height: 100%; }
+#scene { display: block; width: 100%; height: 100%; }
+
+#labels span {
+  position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; color: var(--text);
+  padding-left: 10px; border-left: 1px solid var(--amber);
+}
+#labels b { font-weight: 400; color: var(--amber); margin-right: 8px; }
+
+#panel {
+  position: absolute; z-index: 2; right: var(--pad); top: 50%; width: min(400px, calc(100vw - 2 * var(--pad)));
+  max-height: calc(100% - 180px); overflow: auto;
+  padding: 26px 28px 30px; background: rgb(20 21 24 / 0.92); border-top: 1px solid var(--amber);
+  backdrop-filter: blur(6px); user-select: text; -webkit-user-select: text;
+  transform: translateY(-50%); animation: in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+#panel .tag { color: var(--amber); }
+#panel h2 { margin-top: 14px; font-size: 34px; font-weight: 350; line-height: 1.08; letter-spacing: -0.02em; }
+#panel .kind { margin-bottom: 18px; }
+@keyframes in { from { opacity: 0; transform: translate(24px, -50%); } }
+
+#map { position: absolute; right: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 20px); width: 132px; height: 132px; }
+#map svg { width: 100%; height: 100%; overflow: visible; }
+#map .road { fill: none; stroke: var(--line); stroke-width: 3; }
+#map .stop { cursor: pointer; }
+#map .stop circle:first-child { fill: transparent; }
+#map .stop circle:last-child { fill: var(--amber); opacity: 0.55; }
+#map .stop:hover circle:last-child, #map .stop.on circle:last-child { opacity: 1; }
+#map .car { fill: var(--text); }
+
+#hint { position: absolute; left: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 22px); color: var(--dim); transition: opacity 0.6s; }
+#hint.gone { opacity: 0; }
+#notice { position: absolute; left: var(--pad); top: 64px; color: var(--dim); }
+
+#pedals { display: none; }
+@media (pointer: coarse) {
+  #pedals { display: flex; gap: 12px; position: absolute; right: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 20px); }
+  #pedals button { width: 60px; border: 1px solid var(--dim); background: rgb(14 15 17 / 0.4); border-radius: 3px; padding: 0; touch-action: none; }
+  #pedals button.down { border-color: var(--amber); background: rgb(232 163 61 / 0.14); }
+  #brake { height: 64px; align-self: flex-end; }
+  #gas { height: 104px; }
+  #map { bottom: auto; top: calc(env(safe-area-inset-top) + 56px); width: 96px; height: 96px; }
+  #hint { bottom: calc(env(safe-area-inset-bottom) + 140px); }
+}
+@media (max-width: 720px) {
+  #panel {
+    right: 0; left: 0; top: auto; bottom: 0; width: auto; max-height: 52%;
+    padding-bottom: calc(env(safe-area-inset-bottom) + 24px);
+    transform: none; animation-name: up;
+  }
+  #panel h2 { font-size: 28px; }
+  @keyframes up { from { opacity: 0; transform: translateY(24px); } }
+  html.panel-open #hint { opacity: 0; }
+  html.panel-open #pedals { z-index: 3; opacity: 0.5; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #stage, html.drive.ready #stage, #hint { transition: none; }
+  #panel { animation: none; }
+}
+
+/* pedal captions */
+#pedals button { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; color: var(--dim); }
+#gas::after { content: 'go'; }
+#brake::after { content: 'back'; }
+
+.b p.credit, #panel p.credit { margin-top: 20px; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.credit a { text-decoration: none; }

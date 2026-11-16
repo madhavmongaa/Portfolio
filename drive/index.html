@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Madhav Monga</title>
+    <meta name="description" content="Madhav Monga: WasteWise, Mandi, Campus Life Club and faceless 3D shorts. Drive the map or read the list." />
+    <meta name="theme-color" content="#0E0F11" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..500&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="name">Madhav Monga</span>
+      <a id="mode" class="mono" href="#list">Skip the drive</a>
+    </header>
+
+    <main id="list"><!--list--></main>
+
+    <div id="stage">
+      <canvas id="scene" aria-label="A night map you can drive around. Each project is a stop."></canvas>
+      <div id="labels" aria-hidden="true"></div>
+      <aside id="panel" aria-live="polite" hidden></aside>
+      <nav id="map" aria-label="Stops"></nav>
+      <p id="hint" class="mono"></p>
+      <div id="pedals">
+        <button id="brake" type="button" aria-label="Brake or reverse"></button>
+        <button id="gas" type="button" aria-label="Accelerate"></button>
+      </div>
+      <p id="notice" class="mono" hidden>Running slowly on this device. <a href="#list">Open the list view</a></p>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
