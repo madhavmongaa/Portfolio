@@ -72,16 +72,17 @@ html.drive.ready, html.drive.ready body { overflow: hidden; height: 100%; }
 #labels b { font-weight: 400; color: var(--amber); margin-right: 8px; }
 
 #panel {
-  position: absolute; z-index: 2; right: var(--pad); top: 50%; width: min(400px, calc(100vw - 2 * var(--pad)));
-  max-height: calc(100% - 180px); overflow: auto;
+  position: absolute; z-index: 2; right: var(--pad); top: 76px; width: min(400px, calc(100vw - 2 * var(--pad)));
+  max-height: calc(100% - 76px - 172px); overflow: auto; /* ends above the minimap */
   padding: 26px 28px 30px; background: rgb(20 21 24 / 0.92); border-top: 1px solid var(--amber);
   backdrop-filter: blur(6px); user-select: text; -webkit-user-select: text;
-  transform: translateY(-50%); animation: in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
+  scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+  animation: in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 #panel .tag { color: var(--amber); }
 #panel h2 { margin-top: 14px; font-size: 34px; font-weight: 350; line-height: 1.08; letter-spacing: -0.02em; }
 #panel .kind { margin-bottom: 18px; }
-@keyframes in { from { opacity: 0; transform: translate(24px, -50%); } }
+@keyframes in { from { opacity: 0; transform: translateX(24px); } }
 
 #map { position: absolute; right: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 20px); width: 132px; height: 132px; }
 #map svg { width: 100%; height: 100%; overflow: visible; }
@@ -110,7 +111,7 @@ html.drive.ready, html.drive.ready body { overflow: hidden; height: 100%; }
   #panel {
     right: 0; left: 0; top: auto; bottom: 0; width: auto; max-height: 52%;
     padding-bottom: calc(env(safe-area-inset-bottom) + 24px);
-    transform: none; animation-name: up;
+    animation-name: up;
   }
   #panel h2 { font-size: 28px; }
   @keyframes up { from { opacity: 0; transform: translateY(24px); } }

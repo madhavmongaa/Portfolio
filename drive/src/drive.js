@@ -384,8 +384,10 @@ export function createDrive({ reduced }) {
     dismissed = -1
     if (reduced) {
       // No animated trip: cut straight to the stop.
+      // Park at the stop facing away from where the car was, so the beam is in view.
       const [x, z] = stopList[i].pos
-      Object.assign(state, { x, z: z + 0.01, vx: 0, vz: 0, vf: 0 })
+      const th = Math.atan2(x - state.x, z - state.z)
+      Object.assign(state, { x, z, th: Number.isFinite(th) ? th : state.th, vx: 0, vz: 0, vf: 0 })
       auto = null
       snapCamera = true
     } else auto = i
@@ -542,23 +544,20 @@ export function createDrive({ reduced }) {
     })
 
     // Camera
-    if (reduced) {
-      camera.position.set(x + 24, y + 40, z + 34)
-      camera.lookAt(x, y, z)
-    } else {
-      wide += ((projects[active]?.id === 'shorts' ? 1.6 : 1) - wide) * Math.min(1, dt * 1.5)
-      // A longer lens from further back: less wide-angle stretch on the car.
-      camTarget.set(x - fx * 15.5 * wide, 0, z - fz * 15.5 * wide)
-      camTarget.y = Math.max(y + 5.2 * wide, height(camTarget.x, camTarget.z) + 2)
-      if (snapCamera) camera.position.copy(camTarget)
-      else camera.position.lerp(camTarget, 1 - Math.exp(-dt * 3.2))
-      look.set(x + fx * 5, y + 1.0, z + fz * 5)
-      camera.lookAt(look)
-      const fov = baseFov + 6 * Math.min(1, Math.abs(state.vf) / 32)
-      if (Math.abs(fov - camera.fov) > 0.05) {
-        camera.fov = fov
-        camera.updateProjectionMatrix()
-      }
+    // Same chase view either way. With reduced motion the camera is locked to
+    // the car: no swing on corners, no zoom at speed, no pull-out at a stop.
+    if (!reduced) wide += ((projects[active]?.id === 'shorts' ? 1.6 : 1) - wide) * Math.min(1, dt * 1.5)
+    // A longer lens from further back: less wide-angle stretch on the car.
+    camTarget.set(x - fx * 15.5 * wide, 0, z - fz * 15.5 * wide)
+    camTarget.y = Math.max(y + 5.2 * wide, height(camTarget.x, camTarget.z) + 2)
+    if (snapCamera || reduced) camera.position.copy(camTarget)
+    else camera.position.lerp(camTarget, 1 - Math.exp(-dt * 3.2))
+    look.set(x + fx * 5, y + 1.0, z + fz * 5)
+    camera.lookAt(look)
+    const fov = baseFov + (reduced ? 0 : 6 * Math.min(1, Math.abs(state.vf) / 32))
+    if (Math.abs(fov - camera.fov) > 0.05) {
+      camera.fov = fov
+      camera.updateProjectionMatrix()
     }
     snapCamera = false
     camera.updateMatrixWorld()
@@ -569,9 +568,10 @@ export function createDrive({ reduced }) {
     for (const m of markers) {
       tmp.copy(m.anchor).project(camera)
       const dist = m.anchor.distanceTo(camera.position)
-      const show = tmp.z < 1 && Math.abs(tmp.x) < 1.2 && dist < 190
+      const sy = (1 - tmp.y) * 0.5 * h
+      const show = tmp.z < 1 && Math.abs(tmp.x) < 1.2 && dist < 190 && sy > 72 // stay clear of the header
       m.el.style.opacity = show ? Math.min(1, (190 - dist) / 60).toFixed(2) : 0
-      if (show) m.el.style.transform = `translate(${((tmp.x + 1) * 0.5 * w + 8).toFixed(1)}px, ${((1 - tmp.y) * 0.5 * h).toFixed(1)}px)`
+      if (show) m.el.style.transform = `translate(${((tmp.x + 1) * 0.5 * w + 8).toFixed(1)}px, ${sy.toFixed(1)}px)`
     }
     mapCar.setAttribute('transform', `translate(${x.toFixed(1)} ${z.toFixed(1)}) rotate(${((-th * 180) / Math.PI).toFixed(1)})`)
   }

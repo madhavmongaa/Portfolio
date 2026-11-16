@@ -3,7 +3,9 @@
 
 const root = document.documentElement
 const toggle = document.getElementById('mode')
-const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+// `?motion=reduce` forces the reduced-motion version, for testing without changing system settings.
+const reduced =
+  matchMedia('(prefers-reduced-motion: reduce)').matches || new URLSearchParams(location.search).get('motion') === 'reduce'
 
 function hasWebGL() {
   try {
