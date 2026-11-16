@@ -53,9 +53,9 @@ const COMMON = /* glsl */ `
     float along = dot(d, uDir);
     float side = d.x * uDir.y - d.y * uDir.x;
     float under = exp(-(along * along / 7.0 + side * side / 1.6));
-    vec2 t = d + uDir * 3.3;
-    float tail = exp(-dot(t, t) / 5.0);
-    return AMBER * under * 0.9 + vec3(0.95, 0.07, 0.05) * tail * (0.3 + 0.5 * uBrake);
+    vec2 t = d + uDir * 2.9;
+    float tail = exp(-dot(t, t) / 1.8);
+    return AMBER * under * 0.9 + vec3(0.95, 0.07, 0.05) * tail * (0.22 + 0.4 * uBrake);
   }
   vec3 fogged(vec3 col) {
     return mix(col, GROUND, smoothstep(110.0, 250.0, length(vP - cameraPosition)));
@@ -217,7 +217,7 @@ export function createDrive({ reduced }) {
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(BG)
   scene.fog = new THREE.Fog(BG, 110, 250)
-  const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 600)
+  const camera = new THREE.PerspectiveCamera(36, 1, 0.5, 600)
 
   scene.add(new THREE.HemisphereLight(0xaab3c5, 0x1a1c20, 0.35))
   const moon = new THREE.DirectionalLight(0xdfe6ff, 0.5)
@@ -504,6 +504,7 @@ export function createDrive({ reduced }) {
   const look = new THREE.Vector3()
   const tmp = new THREE.Vector3()
   let snapCamera = true
+  let baseFov = 36
   let wide = 1
 
   function place(dt) {
@@ -546,13 +547,14 @@ export function createDrive({ reduced }) {
       camera.lookAt(x, y, z)
     } else {
       wide += ((projects[active]?.id === 'shorts' ? 1.6 : 1) - wide) * Math.min(1, dt * 1.5)
-      camTarget.set(x - fx * 10.5 * wide, 0, z - fz * 10.5 * wide)
-      camTarget.y = Math.max(y + 4.4 * wide, height(camTarget.x, camTarget.z) + 2)
+      // A longer lens from further back: less wide-angle stretch on the car.
+      camTarget.set(x - fx * 15.5 * wide, 0, z - fz * 15.5 * wide)
+      camTarget.y = Math.max(y + 5.2 * wide, height(camTarget.x, camTarget.z) + 2)
       if (snapCamera) camera.position.copy(camTarget)
       else camera.position.lerp(camTarget, 1 - Math.exp(-dt * 3.2))
-      look.set(x + fx * 4, y + 1.3, z + fz * 4)
+      look.set(x + fx * 5, y + 1.0, z + fz * 5)
       camera.lookAt(look)
-      const fov = 55 + 9 * Math.min(1, Math.abs(state.vf) / 32)
+      const fov = baseFov + 6 * Math.min(1, Math.abs(state.vf) / 32)
       if (Math.abs(fov - camera.fov) > 0.05) {
         camera.fov = fov
         camera.updateProjectionMatrix()
@@ -580,6 +582,9 @@ export function createDrive({ reduced }) {
     const h = stage.clientHeight
     renderer.setSize(w, h, false)
     camera.aspect = w / h
+    // Keep roughly the same sideways view on narrow, portrait screens.
+    const rad = Math.PI / 180
+    baseFov = THREE.MathUtils.clamp((2 * Math.atan(Math.tan(28 * rad) / camera.aspect)) / rad, 36, 58)
     camera.updateProjectionMatrix()
     frameCar()
   }
