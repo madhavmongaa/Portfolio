@@ -1,0 +1,453 @@
+// Everything you hear is synthesised here with Web Audio: no sound files.
+// The engine, tyres, wind and exhaust follow the car; small chimes mark
+// arrivals; an original synthwave loop plays underneath.
+// Browsers only allow sound after a click or key press, so nothing starts
+// until the first one.
+
+const STORE = 'mm-sound'
+const BPM = 96
+const S16 = 60 / BPM / 4 // one sixteenth note, in seconds
+const mtof = (m) => 440 * 2 ** ((m - 69) / 12)
+
+// Am, F, C, G, one bar each. Pad voicings move as little as possible.
+const PROG = [
+  { root: 33, pad: [57, 60, 64] },
+  { root: 29, pad: [57, 60, 65] },
+  { root: 36, pad: [55, 60, 64] },
+  { root: 31, pad: [55, 59, 62] },
+]
+// Lead line over the four bars: [sixteenth, note, length in sixteenths].
+const LEAD = [
+  [0, 76, 6], [6, 74, 2], [8, 72, 4], [12, 69, 4],
+  [16, 77, 6], [22, 76, 2], [24, 72, 8],
+  [32, 79, 6], [38, 76, 2], [40, 72, 4], [44, 76, 4],
+  [48, 74, 12], [60, 71, 4],
+]
+const LEAD_AT = new Map(LEAD.map((n) => [n[0], n]))
+
+export function createAudio() {
+  let on = true
+  try {
+    on = localStorage.getItem(STORE) !== 'off'
+  } catch {}
+  let ctx = null
+  let out, sfx, music, musicIn, duck, revSend, dlySend, sfxVerb, noise
+  let eng = null
+  let playing = false // the drive is on screen
+  let live = false // sound is actually running
+  let timer = 0
+  let step = 0
+  let nextT = 0
+  let rpm = 0.15
+  let dimmed = false
+
+  // ---------- setup ----------
+  function build() {
+    const AC = window.AudioContext || window.webkitAudioContext
+    if (!AC) return false
+    ctx = new AC()
+    const comp = ctx.createDynamicsCompressor()
+    comp.threshold.value = -12
+    comp.ratio.value = 4
+    comp.attack.value = 0.005
+    comp.release.value = 0.2
+    out = gain(0)
+    out.connect(comp)
+    comp.connect(ctx.destination)
+    sfx = gain(0.9, out)
+    music = gain(0.42, out)
+    musicIn = gain(1, music)
+    duck = gain(1, musicIn) // pumped by the kick drum
+
+    // One second of white noise, reused by everything that hisses.
+    noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate)
+    const nd = noise.getChannelData(0)
+    for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1
+
+    // Music reverb and a dotted-eighth echo.
+    revSend = gain(1)
+    const verb = ctx.createConvolver()
+    verb.buffer = impulse(2.8, 2.6)
+    revSend.connect(verb)
+    verb.connect(gain(0.5, musicIn))
+    dlySend = gain(1)
+    const dly = ctx.createDelay(1)
+    dly.delayTime.value = S16 * 3
+    const fb = gain(0.36)
+    const dlp = filter('lowpass', 2600)
+    dlySend.connect(dly)
+    dly.connect(dlp)
+    dlp.connect(fb)
+    fb.connect(dly)
+    dlp.connect(gain(0.35, musicIn))
+
+    // A shorter room for the chimes.
+    sfxVerb = gain(1)
+    const sv = ctx.createConvolver()
+    sv.buffer = impulse(1.6, 3)
+    sfxVerb.connect(sv)
+    sv.connect(gain(0.4, sfx))
+
+    eng = buildEngine()
+    return true
+  }
+
+  function gain(v, to) {
+    const g = ctx.createGain()
+    g.gain.value = v
+    if (to) g.connect(to)
+    return g
+  }
+  function filter(type, f, q = 0.7) {
+    const b = ctx.createBiquadFilter()
+    b.type = type
+    b.frequency.value = f
+    b.Q.value = q
+    return b
+  }
+  function impulse(sec, decay) {
+    const len = Math.floor(ctx.sampleRate * sec)
+    const b = ctx.createBuffer(2, len, ctx.sampleRate)
+    for (let c = 0; c < 2; c++) {
+      const d = b.getChannelData(c)
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len) ** decay
+    }
+    return b
+  }
+  function noiseSrc() {
+    const s = ctx.createBufferSource()
+    s.buffer = noise
+    s.loop = true
+    return s
+  }
+
+  // ---------- car ----------
+  function buildEngine() {
+    const body = gain(0, sfx)
+    const am = gain(0.75, body) // firing pulses
+    const lp = filter('lowpass', 400, 3)
+    lp.connect(am)
+    const shaper = ctx.createWaveShaper()
+    const curve = new Float32Array(1024)
+    for (let i = 0; i < 1024; i++) {
+      const x = (i / 1023) * 2 - 1
+      curve[i] = Math.tanh(x * 2.5)
+    }
+    shaper.curve = curve
+    shaper.connect(lp)
+    const mk = (type, to, v = 1) => {
+      const o = ctx.createOscillator()
+      o.type = type
+      o.connect(gain(v, to))
+      o.start()
+      return o
+    }
+    const o1 = mk('sawtooth', shaper, 0.5)
+    const o2 = mk('sawtooth', shaper, 0.4)
+    const sub = mk('triangle', lp, 0.8)
+    const lfo = mk('sine', null)
+    lfo.disconnect()
+    lfo.connect(gain(0.3, am.gain))
+
+    // Tyres: two narrow bands of noise make the squeal.
+    const squeal = gain(0, sfx)
+    const n1 = noiseSrc()
+    const bp1 = filter('bandpass', 1150, 9)
+    const bp2 = filter('bandpass', 2400, 12)
+    n1.connect(bp1)
+    n1.connect(bp2)
+    bp1.connect(squeal)
+    bp2.connect(gain(0.6, squeal))
+    n1.start()
+
+    const wind = gain(0, sfx)
+    const n2 = noiseSrc()
+    const wl = filter('lowpass', 700)
+    n2.connect(wl)
+    wl.connect(wind)
+    n2.start(0, 0.7)
+
+    const rumble = gain(0, sfx)
+    const n3 = noiseSrc()
+    const rl = filter('lowpass', 150, 2)
+    n3.connect(rl)
+    rl.connect(rumble)
+    n3.start(0, 1.3)
+
+    return { body, lp, o1, o2, sub, lfo, squeal, bp1, wind, rumble }
+  }
+
+  const GEARS = [0, 8, 14, 20, 26, 33]
+  // Called every frame with the car's state.
+  function drive(dt, { speed, throttle, skid, off }) {
+    if (!live) return
+    const v = Math.abs(speed)
+    let k = 0
+    while (k < 4 && v > GEARS[k + 1]) k++
+    const frac = Math.min(1, (v - GEARS[k]) / (GEARS[k + 1] - GEARS[k]))
+    let target = v < 0.5 ? (throttle ? 0.55 : 0.12) : 0.22 + 0.72 * frac
+    if (!throttle) target *= 0.85
+    if (throttle && skid > 0.5 && v < 10) target = 0.9 // wheelspin
+    rpm += (target - rpm) * Math.min(1, dt * (target > rpm ? 7 : 4))
+
+    const t = ctx.currentTime
+    const f = 30 + rpm * 125
+    eng.o1.frequency.setTargetAtTime(f, t, 0.03)
+    eng.o2.frequency.setTargetAtTime(f * 1.007, t, 0.03)
+    eng.sub.frequency.setTargetAtTime(f * 0.5, t, 0.03)
+    eng.lfo.frequency.setTargetAtTime(f * 0.5, t, 0.03)
+    eng.lp.frequency.setTargetAtTime(220 + rpm * 900 + throttle * 1000, t, 0.06)
+    eng.body.gain.setTargetAtTime(0.05 + 0.06 * rpm + 0.07 * throttle, t, 0.08)
+
+    const sq = v > 2 ? skid : 0
+    eng.squeal.gain.setTargetAtTime(sq * 0.11, t, 0.05)
+    eng.bp1.frequency.setTargetAtTime(1050 + Math.random() * 220 + v * 6, t, 0.02)
+    eng.wind.gain.setTargetAtTime(Math.min(1, v / 32) ** 2 * 0.06, t, 0.2)
+    eng.rumble.gain.setTargetAtTime(off ? Math.min(1, v / 8) * 0.22 : 0, t, 0.1)
+  }
+
+  // Exhaust crackle on lift-off: a handful of short, dark bangs.
+  function pop() {
+    if (!live) return
+    const n = 3 + Math.floor(Math.random() * 4)
+    for (let i = 0; i < n; i++) {
+      const t = ctx.currentTime + 0.05 + Math.random() * 0.5
+      const s = noiseSrc()
+      const bp = filter('bandpass', 350 + Math.random() * 500, 1.5)
+      const g = gain(0)
+      s.connect(bp)
+      bp.connect(g)
+      g.connect(sfx)
+      g.gain.setValueAtTime(0, t)
+      g.gain.linearRampToValueAtTime(0.5 + Math.random() * 0.4, t + 0.004)
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.05 + Math.random() * 0.05)
+      s.start(t, Math.random())
+      s.stop(t + 0.12)
+    }
+  }
+
+  // ---------- chimes ----------
+  function tone(m, t, dur, type, vol, dest = sfx, verb = sfxVerb) {
+    const o = ctx.createOscillator()
+    o.type = type
+    o.frequency.value = mtof(m)
+    const g = gain(0)
+    o.connect(g)
+    g.connect(dest)
+    if (verb) g.connect(verb)
+    g.gain.setValueAtTime(0, t)
+    g.gain.linearRampToValueAtTime(vol, t + 0.01)
+    g.gain.exponentialRampToValueAtTime(0.0008, t + dur)
+    o.start(t)
+    o.stop(t + dur + 0.05)
+  }
+  const now = () => ctx.currentTime + 0.01
+  function arrive() {
+    if (!live) return
+    tone(81, now(), 0.8, 'sine', 0.07)
+    tone(88, now() + 0.1, 1.1, 'sine', 0.06)
+  }
+  function click() {
+    if (!live) return
+    tone(93, now(), 0.09, 'triangle', 0.04, sfx, null)
+  }
+  function fanfare() {
+    if (!live) return
+    ;[69, 72, 76, 81, 84, 88].forEach((m, i) => tone(m, now() + i * 0.09, 0.9, 'triangle', 0.05))
+  }
+
+  // ---------- music ----------
+  function voice(type, m, t, dur, { vol, cut, a = 0.005, r = 0.1, detune = 0, to = duck, rev = 0, dl = 0 }) {
+    const o = ctx.createOscillator()
+    o.type = type
+    o.frequency.value = mtof(m)
+    o.detune.value = detune
+    const lp = filter('lowpass', cut)
+    const g = gain(0)
+    o.connect(lp)
+    lp.connect(g)
+    g.connect(to)
+    if (rev) g.connect(gain(rev, revSend))
+    if (dl) g.connect(gain(dl, dlySend))
+    g.gain.setValueAtTime(0, t)
+    g.gain.linearRampToValueAtTime(vol, t + a)
+    g.gain.setValueAtTime(vol, t + Math.max(a, dur - r))
+    g.gain.linearRampToValueAtTime(0, t + dur)
+    o.start(t)
+    o.stop(t + dur + 0.02)
+    return { o, lp }
+  }
+  function kick(t) {
+    const o = ctx.createOscillator()
+    const g = gain(0, musicIn)
+    o.connect(g)
+    o.frequency.setValueAtTime(150, t)
+    o.frequency.exponentialRampToValueAtTime(42, t + 0.13)
+    g.gain.setValueAtTime(0.9, t)
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.4)
+    o.start(t)
+    o.stop(t + 0.42)
+    duck.gain.cancelScheduledValues(t)
+    duck.gain.setValueAtTime(0.35, t)
+    duck.gain.setTargetAtTime(1, t + 0.03, 0.09)
+  }
+  function snare(t) {
+    const s = noiseSrc()
+    const bp = filter('bandpass', 1700, 0.8)
+    const g = gain(0, musicIn)
+    s.connect(bp)
+    bp.connect(g)
+    g.connect(gain(0.9, revSend)) // the big gated-sounding room
+    g.gain.setValueAtTime(0.45, t)
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.22)
+    s.start(t, Math.random())
+    s.stop(t + 0.25)
+    const o = ctx.createOscillator()
+    o.type = 'triangle'
+    o.frequency.setValueAtTime(220, t)
+    o.frequency.exponentialRampToValueAtTime(140, t + 0.08)
+    const og = gain(0, musicIn)
+    o.connect(og)
+    og.gain.setValueAtTime(0.3, t)
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.1)
+    o.start(t)
+    o.stop(t + 0.12)
+  }
+  function hat(t, vol) {
+    const s = noiseSrc()
+    const hp = filter('highpass', 7500)
+    const g = gain(0, musicIn)
+    s.connect(hp)
+    hp.connect(g)
+    g.gain.setValueAtTime(vol, t)
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.045)
+    s.start(t, Math.random())
+    s.stop(t + 0.06)
+  }
+
+  // One sixteenth of the loop. Form: 4-bar intro, then 8-bar sections that
+  // cycle groove, groove with lead, breakdown.
+  function play16(n, t) {
+    const bar = Math.floor(n / 16)
+    const s = n % 16
+    const ch = PROG[bar % 4]
+    const sec = bar < 4 ? 0 : 1 + (Math.floor((bar - 4) / 8) % 3)
+    const drums = sec === 1 || sec === 2
+    const lead = sec === 2 || sec === 3
+
+    if (s === 0) {
+      for (const m of ch.pad) {
+        for (const d of [-9, 9]) {
+          voice('sawtooth', m, t, S16 * 16 + 0.15, { vol: 0.028, cut: sec === 3 ? 1800 : 1100, a: 0.45, r: 0.6, detune: d, rev: 0.6 })
+        }
+      }
+    }
+    // Arpeggio up the chord, an octave above the pad.
+    const arp = [...ch.pad.map((m) => m + 12), ch.pad[0] + 24]
+    const open = sec === 0 ? 600 + (bar * 16 + s) * 6 : 2400
+    voice('square', arp[s % 4], t, S16 * 0.9, { vol: sec === 0 ? 0.022 : 0.03, cut: open, r: 0.08, dl: 0.5, rev: 0.15 })
+    // Octave bass on the eighths.
+    if (s % 2 === 0 && (bar >= 2 || sec > 0) && sec !== 3) {
+      const m = ch.root + (s % 4 === 2 ? 12 : 0)
+      const b = voice('sawtooth', m, t, S16 * 1.8, { vol: 0.16, cut: 300, r: 0.05 })
+      b.lp.frequency.setValueAtTime(1100, t)
+      b.lp.frequency.exponentialRampToValueAtTime(260, t + 0.18)
+    }
+    if (drums) {
+      if (s % 4 === 0) kick(t)
+      if (s === 4 || s === 12) snare(t)
+      if (s % 4 === 2) hat(t, 0.12)
+      else if (s % 2 === 1) hat(t, 0.04)
+    } else if (sec === 3 && s % 4 === 2) hat(t, 0.07)
+    if (lead) {
+      const note = LEAD_AT.get((bar % 4) * 16 + s)
+      if (note) {
+        const dur = note[2] * S16
+        for (const d of [-6, 6]) {
+          const v = voice('sawtooth', note[1], t, dur, { vol: 0.03, cut: 2600, a: 0.02, r: 0.12, detune: d, rev: 0.35, dl: 0.35 })
+          v.o.frequency.setValueAtTime(mtof(note[1] - 0.4), t) // a little scoop into each note
+          v.o.frequency.exponentialRampToValueAtTime(mtof(note[1]), t + 0.06)
+        }
+      }
+    }
+  }
+  function tick() {
+    while (nextT < ctx.currentTime + 0.15) {
+      play16(step++, nextT)
+      nextT += S16
+    }
+  }
+
+  // ---------- on / off ----------
+  function begin() {
+    if (live || !on || !playing || !ctx || document.hidden) return
+    live = true
+    ctx.resume()
+    const t = ctx.currentTime
+    out.gain.cancelScheduledValues(t)
+    out.gain.setValueAtTime(out.gain.value, t)
+    out.gain.linearRampToValueAtTime(1, t + 1.2)
+    if (!timer) {
+      nextT = t + 0.1
+      timer = setInterval(tick, 25)
+      tick()
+    }
+  }
+  function end() {
+    if (!live) return
+    live = false
+    const t = ctx.currentTime
+    out.gain.cancelScheduledValues(t)
+    out.gain.setValueAtTime(out.gain.value, t)
+    out.gain.linearRampToValueAtTime(0, t + 0.3)
+    clearInterval(timer)
+    timer = 0
+    setTimeout(() => !live && ctx.suspend(), 400)
+  }
+
+  // The first click or key press anywhere unlocks audio.
+  const gesture = () => {
+    if (!ctx && !build()) return
+    removeEventListener('pointerdown', gesture, true)
+    removeEventListener('keydown', gesture, true)
+    begin()
+  }
+  addEventListener('pointerdown', gesture, true)
+  addEventListener('keydown', gesture, true)
+  document.addEventListener('visibilitychange', () => (document.hidden ? end() : begin()))
+
+  return {
+    get on() {
+      return on
+    },
+    setOn(v) {
+      on = v
+      try {
+        localStorage.setItem(STORE, v ? 'on' : 'off')
+      } catch {}
+      if (v) {
+        if (!ctx) build()
+        begin()
+      } else end()
+    },
+    start() {
+      playing = true
+      begin()
+    },
+    stop() {
+      playing = false
+      end()
+    },
+    // Music sits lower while a panel is open for reading.
+    dim(v) {
+      if (v === dimmed || !ctx) return
+      dimmed = v
+      music.gain.setTargetAtTime(v ? 0.24 : 0.42, ctx.currentTime, 0.3)
+    },
+    drive,
+    pop,
+    arrive,
+    click,
+    fanfare,
+  }
+}

@@ -128,7 +128,6 @@ const TAIL_Y = 0.86 // height of the rear light bar
 const LENGTH = 4.5 // metres, a 991-generation 911
 const HEAD_X = 0.6 // headlamp centres, across and up
 const HEAD_Y = 0.66
-const BEAM = 15 // length of the visible headlight beam
 
 // Swap the box car for the Porsche 911 Carrera S model once it has downloaded.
 // Model: "Porsche 911 Carrera S (991.2)" by Mona x Supercars, CC BY 4.0.
@@ -207,46 +206,17 @@ export async function loadModel({ car, wheels, stand }) {
     car.add(s)
   }
   // ---------- headlights ----------
-  // A warm glow at each lamp and a faint beam ahead of it, which shows most
-  // where it passes through tyre smoke and mist.
+  // A warm glow at each lamp. The light they throw is drawn on the road
+  // itself, in the ground and road shaders.
   const headHalo = new THREE.SpriteMaterial({
     map: halo.map, color: 0xfff1dc, transparent: true, opacity: 0.9,
     blending: THREE.AdditiveBlending, depthWrite: false,
-  })
-  const beamGeo = new THREE.ConeGeometry(2.6, BEAM, 28, 1, true)
-  beamGeo.translate(0, -BEAM / 2, 0) // apex at the lamp
-  beamGeo.rotateX(-Math.PI / 2) // pointing forward (+z)
-  const beamMat = new THREE.ShaderMaterial({
-    uniforms: { uLen: { value: BEAM } },
-    vertexShader: /* glsl */ `
-      uniform float uLen;
-      varying float vT;
-      varying float vFace;
-      void main() {
-        vT = position.z / uLen;
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        vec3 n = normalize(normalMatrix * normal);
-        vFace = abs(dot(n, normalize(-mv.xyz)));
-        gl_Position = projectionMatrix * mv;
-      }`,
-    fragmentShader: /* glsl */ `
-      varying float vT;
-      varying float vFace;
-      void main() {
-        float a = pow(1.0 - clamp(vT, 0.0, 1.0), 1.6) * smoothstep(0.0, 0.08, vT) * pow(vFace, 1.5) * 0.07;
-        gl_FragColor = vec4(vec3(1.0, 0.94, 0.84) * a, 1.0);
-      }`,
-    transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
   })
   for (const x of [-HEAD_X, HEAD_X]) {
     const s = new THREE.Sprite(headHalo)
     s.position.set(x, HEAD_Y, LENGTH / 2 - 0.02)
     s.scale.set(0.42, 0.28, 1)
-    const beam = new THREE.Mesh(beamGeo, beamMat)
-    beam.position.set(x, HEAD_Y, LENGTH / 2 - 0.1)
-    beam.rotation.x = 0.07 // aimed slightly down at the road
-    beam.renderOrder = 3
-    car.add(s, beam)
+    car.add(s)
   }
 
   // ---------- exhaust pops ----------

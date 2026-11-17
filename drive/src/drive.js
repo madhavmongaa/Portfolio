@@ -1,3 +1,4 @@
+import { createAudio } from './audio.js'
 import * as THREE from 'three'
 import { projects } from './data/projects.js'
 import { panelHtml, num } from './ui/html.js'
@@ -29,14 +30,18 @@ const COMMON = /* glsl */ `
   uniform float uBrake;
   varying vec3 vP;
 
-  // How much of the car's headlights reach this point on the ground.
+  // How much of the car's headlights reach this point on the ground: a low-beam
+  // throw that starts at the bumper, widens ahead and has a soft edge, with a
+  // brighter patch a few metres out.
   float headlight(vec2 p) {
     vec2 d = p - uCar;
-    float dist = length(d);
-    float c = dot(d / max(dist, 0.001), uDir);
-    float cone = smoothstep(0.72, 0.96, c) * exp(-dist / 48.0) * smoothstep(1.0, 5.0, dist);
-    float pool = exp(-dist * dist / 70.0) * 0.3;
-    return clamp(cone * 1.3 + pool, 0.0, 1.0);
+    float along = dot(d, uDir);
+    float side = d.x * uDir.y - d.y * uDir.x;
+    float halfW = 0.9 + max(along, 0.0) * 0.36;
+    float across = 1.0 - smoothstep(halfW * 0.55, halfW, abs(side));
+    float reach = smoothstep(-0.5, 2.5, along) * exp(-max(along, 0.0) / 30.0);
+    float spot = 1.0 + 0.45 * exp(-pow((along - 9.0) / 7.0, 2.0));
+    return clamp(across * reach * spot, 0.0, 1.0);
   }
   float ring(float d, float r) { return 1.0 - smoothstep(0.0, 0.2, abs(d - r)); }
   // Amber survey rings around each stop. The first stop gets three, for sorting.
@@ -108,7 +113,7 @@ const GROUND_FRAG = /* glsl */ `
     vec2 gd = abs(fract(g - 0.5) - 0.5) / max(fwidth(g), vec2(0.0001));
     float grid = 1.0 - smoothstep(0.3, 0.9, min(gd.x, gd.y));
 
-    vec3 col = GROUND + L * 0.075;
+    vec3 col = GROUND + vec3(1.0, 0.92, 0.78) * L * 0.08;
     col = mix(col, LINE * 0.8, grid * (0.3 + 0.5 * L));
     col = mix(col, mix(LINE * (0.8 + 0.45 * major), BRIGHT, L), contour);
     col += AMBER * stops(vP.xz) + carGlow(vP.xz);
@@ -126,7 +131,7 @@ const ROAD_FRAG = /* glsl */ `
   void main() {
     float L = headlight(vP.xz);
     float edge = step(vUv.x, 0.028) + step(0.972, vUv.x);
-    vec3 col = ROAD + L * 0.11;
+    vec3 col = ROAD + vec3(1.0, 0.92, 0.78) * L * 0.14;
     col = mix(col, mix(LINE * 1.6, BRIGHT * 1.1, L), edge);
 
     // Racing line: amber dashes that cut to the inside of each corner and
@@ -224,6 +229,17 @@ function ribbon(curve, lift, samples) {
 }
 
 export function createDrive({ reduced }) {
+  const audio = createAudio()
+  const soundBtn = document.getElementById('sound')
+  const showSound = () => {
+    soundBtn.textContent = audio.on ? 'Sound on' : 'Sound off'
+    soundBtn.setAttribute('aria-pressed', String(audio.on))
+  }
+  showSound()
+  soundBtn.addEventListener('click', () => {
+    audio.setOn(!audio.on)
+    showSound()
+  })
   const canvas = $('scene')
   const stage = $('stage')
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
@@ -389,7 +405,10 @@ export function createDrive({ reduced }) {
     try {
       localStorage.setItem(STORE, JSON.stringify([...visited].map((k) => projects[k].id)))
     } catch {}
-    if (allSeen()) unlockedNote = 8
+    if (allSeen()) {
+      unlockedNote = 8
+      audio.fanfare()
+    }
     showProgress()
   }
   function showProgress() {
@@ -433,6 +452,8 @@ export function createDrive({ reduced }) {
       keys.add(e.code)
       touched()
       e.preventDefault()
+    } else if (e.code === 'KeyM') {
+      soundBtn.click()
     } else if (e.code === 'Escape') {
       closePanel(true)
     } else if (e.code === 'Enter' && !e.target.closest?.('a, button, [role=button]') && active >= 0) {
@@ -492,6 +513,7 @@ export function createDrive({ reduced }) {
   }
 
   const goTo = (i) => {
+    audio.click()
     hint.classList.add('gone')
     dismissed = -1
     if (reduced) {
@@ -547,6 +569,8 @@ export function createDrive({ reduced }) {
     panel.scrollTop = 0
     panelOpen = true
     root.classList.add('panel-open')
+    audio.arrive()
+    audio.dim(true)
     frameCar()
   }
   function closePanel(byUser) {
@@ -554,6 +578,7 @@ export function createDrive({ reduced }) {
     panel.hidden = true
     panelOpen = false
     root.classList.remove('panel-open')
+    audio.dim(false)
     frameCar()
   }
 
@@ -638,7 +663,7 @@ export function createDrive({ reduced }) {
 
     // Wheelspin when pulling away hard from a near stop.
     if (throttle && !state.throttle && vf < 3) state.launch = 0.7
-    if (!throttle && state.throttle && vf > 20 && !reduced) parts.api?.pop() // lift-off crackle
+    if (!throttle && state.throttle && vf > 20 && !reduced) (parts.api?.pop(), audio.pop()) // lift-off crackle
     state.launch = Math.max(0, state.launch - dt)
     state.throttle = throttle
 
@@ -646,6 +671,7 @@ export function createDrive({ reduced }) {
     if (brake) vf -= (vf > 0.5 ? 34 : 9) * dt
     if (hand) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 10 * dt)
     const off = offRoad(state.x, state.z)
+    state.off = off
     vf -= vf * (off ? 1.1 : 0.42) * dt
     vf = THREE.MathUtils.clamp(vf, -9, 32)
     const scrub = state.drift ? (hand ? 1.2 : throttle ? 0.9 : 1.7) : 6.5
@@ -900,6 +926,7 @@ export function createDrive({ reduced }) {
     last = now
     step(dt)
     place(dt)
+    audio.drive(dt, { speed: state.vf, throttle: state.throttle, skid: state.skid, off: state.off })
     effects.update(dt, camera, renderer.domElement.height)
     studScale.value = renderer.domElement.height / (2 * Math.tan((camera.fov * Math.PI) / 360))
     if (!reduced) uniforms.uTime.value += dt // the dashes stay still for reduced motion
@@ -932,10 +959,12 @@ export function createDrive({ reduced }) {
       snapCamera = true
       last = performance.now()
       raf = requestAnimationFrame(frame)
+      audio.start()
     },
     stop() {
       running = false
       cancelAnimationFrame(raf)
+      audio.stop()
       keys.clear()
       auto = null
       closePanel(false)
