@@ -38,7 +38,7 @@ export function createAudio() {
   let timer = 0
   let step = 0
   let nextT = 0
-  let rpm = 0.15
+  let rpm = 0
   let dimmed = false
 
   // ---------- setup ----------
@@ -122,32 +122,83 @@ export function createAudio() {
   }
 
   // ---------- car ----------
+  // A crossplane V8 on straight pipes. The crank fires every 90 degrees, but
+  // each bank's four cylinders fire unevenly (gaps of 270, 180, 90 and 180
+  // degrees), and with no crossover pipe each tailpipe hears only its own bank:
+  // that unevenness is the burble. One engine cycle (720 degrees) is drawn as a
+  // pulse train per bank and turned into a waveform the oscillator repeats.
+  // Firing order 1-8-4-3-6-5-7-2; odd cylinders on the left bank.
+  const FIRING = [[0, 'L', 1.0], [90, 'R', 0.92], [180, 'R', 1.06], [270, 'L', 0.95], [360, 'R', 1.0], [450, 'L', 1.08], [540, 'L', 0.9], [630, 'R', 1.03]]
+  function bankWave(bank) {
+    const N = 4096
+    const H = 96
+    const x = new Float32Array(N)
+    for (const [deg, b, amp] of FIRING) {
+      if (b !== bank) continue
+      const start = deg / 720
+      for (let i = 0; i < N; i++) {
+        let d = i / N - start
+        if (d < 0) d += 1
+        // A hard exhaust pulse that rings and dies away in the pipe.
+        x[i] += amp * Math.exp(-d / 0.028) * (Math.sin(2 * Math.PI * d * 11) + 0.6 * Math.sin(2 * Math.PI * d * 4))
+      }
+    }
+    const re = new Float32Array(H)
+    const im = new Float32Array(H)
+    for (let h = 1; h < H; h++) {
+      let a = 0
+      let b = 0
+      for (let i = 0; i < N; i++) {
+        const w = (2 * Math.PI * h * i) / N
+        a += x[i] * Math.cos(w)
+        b += x[i] * Math.sin(w)
+      }
+      re[h] = (2 * a) / N
+      im[h] = (2 * b) / N
+    }
+    return ctx.createPeriodicWave(re, im)
+  }
+
   function buildEngine() {
     const body = gain(0, sfx)
-    const am = gain(0.75, body) // firing pulses
-    const lp = filter('lowpass', 400, 3)
-    lp.connect(am)
+    const tone = filter('lowpass', 600, 1.2)
+    const chest = filter('peaking', 95, 1)
+    chest.gain.value = 7
     const shaper = ctx.createWaveShaper()
-    const curve = new Float32Array(1024)
-    for (let i = 0; i < 1024; i++) {
-      const x = (i / 1023) * 2 - 1
-      curve[i] = Math.tanh(x * 2.5)
-    }
+    const curve = new Float32Array(2048)
+    for (let i = 0; i < 2048; i++) curve[i] = Math.tanh(((i / 2047) * 2 - 1) * 3.2)
     shaper.curve = curve
-    shaper.connect(lp)
-    const mk = (type, to, v = 1) => {
+    shaper.oversample = '2x'
+    const drive = gain(1.4)
+    drive.connect(shaper)
+    shaper.connect(chest)
+    chest.connect(tone)
+    tone.connect(body)
+
+    // One oscillator per bank, panned a little apart like twin tailpipes.
+    const banks = ['L', 'R'].map((b) => {
       const o = ctx.createOscillator()
-      o.type = type
-      o.connect(gain(v, to))
-      o.start()
+      o.setPeriodicWave(bankWave(b))
+      const p = ctx.createStereoPanner()
+      p.pan.value = b === 'L' ? -0.35 : 0.35
+      o.connect(p)
+      p.connect(drive)
       return o
-    }
-    const o1 = mk('sawtooth', shaper, 0.5)
-    const o2 = mk('sawtooth', shaper, 0.4)
-    const sub = mk('triangle', lp, 0.8)
-    const lfo = mk('sine', null)
-    lfo.disconnect()
-    lfo.connect(gain(0.3, am.gain))
+    })
+    // Rasp: noise chopped by the exhaust pulses, the tearing edge of an open pipe.
+    const rasp = gain(0)
+    const rn = noiseSrc()
+    const rb = filter('bandpass', 1400, 0.8)
+    rn.connect(rb)
+    rb.connect(rasp)
+    rasp.connect(tone)
+    const raspAmt = gain(0)
+    banks[0].connect(raspAmt)
+    banks[1].connect(raspAmt)
+    raspAmt.connect(rasp.gain)
+    rn.start()
+    const t = ctx.currentTime + 0.02
+    for (const o of banks) o.start(t) // same start, same automation: they stay in phase
 
     // Tyres: two narrow bands of noise make the squeal.
     const squeal = gain(0, sfx)
@@ -174,10 +225,12 @@ export function createAudio() {
     rl.connect(rumble)
     n3.start(0, 1.3)
 
-    return { body, lp, o1, o2, sub, lfo, squeal, bp1, wind, rumble }
+    return { body, tone, drive, banks, raspAmt, squeal, bp1, wind, rumble, gear: 0, cut: 0 }
   }
 
   const GEARS = [0, 8, 14, 20, 26, 33]
+  const IDLE = 800
+  const REDLINE = 7000
   // Called every frame with the car's state.
   function drive(dt, { speed, throttle, skid, off }) {
     if (!live) return
@@ -185,19 +238,33 @@ export function createAudio() {
     let k = 0
     while (k < 4 && v > GEARS[k + 1]) k++
     const frac = Math.min(1, (v - GEARS[k]) / (GEARS[k + 1] - GEARS[k]))
-    let target = v < 0.5 ? (throttle ? 0.55 : 0.12) : 0.22 + 0.72 * frac
-    if (!throttle) target *= 0.85
-    if (throttle && skid > 0.5 && v < 10) target = 0.9 // wheelspin
-    rpm += (target - rpm) * Math.min(1, dt * (target > rpm ? 7 : 4))
-
+    let target = v < 0.5 ? (throttle ? 0.5 : 0) : (k === 0 ? 0.08 : 0.3) + (k === 0 ? 0.84 : 0.64) * frac
+    if (!throttle && v >= 0.5) target *= 0.9
+    if (throttle && skid > 0.5 && v < 10) target = 0.92 // wheelspin
     const t = ctx.currentTime
-    const f = 30 + rpm * 125
-    eng.o1.frequency.setTargetAtTime(f, t, 0.03)
-    eng.o2.frequency.setTargetAtTime(f * 1.007, t, 0.03)
-    eng.sub.frequency.setTargetAtTime(f * 0.5, t, 0.03)
-    eng.lfo.frequency.setTargetAtTime(f * 0.5, t, 0.03)
-    eng.lp.frequency.setTargetAtTime(220 + rpm * 900 + throttle * 1000, t, 0.06)
-    eng.body.gain.setTargetAtTime(0.05 + 0.06 * rpm + 0.07 * throttle, t, 0.08)
+    // Upshift under power: a split-second ignition cut with a crack from the pipes.
+    if (k > eng.gear && throttle) {
+      eng.cut = 0.09
+      bang(t + 0.02, 0.5)
+    }
+    eng.gear = k
+    eng.cut = Math.max(0, eng.cut - dt)
+    rpm += (target - rpm) * Math.min(1, dt * (target > rpm ? 6 : 3.5))
+
+    // Near idle a lumpy cam makes the revs hunt a little.
+    const lope = rpm < 0.15 ? (Math.random() - 0.5) * 0.06 : 0
+    const RPM = IDLE + (rpm + lope) * (REDLINE - IDLE)
+    const cyc = RPM / 120 // engine cycles per second (one cycle is two turns)
+    for (const o of eng.banks) o.frequency.setTargetAtTime(cyc, t, 0.025)
+    const load = eng.cut > 0 ? 0 : throttle
+    eng.tone.frequency.setTargetAtTime(380 + rpm * 1400 + load * (900 + rpm * 2600), t, 0.05)
+    eng.drive.gain.setTargetAtTime(1 + load * 2.2, t, 0.05)
+    eng.raspAmt.gain.setTargetAtTime(0.05 + load * (0.25 + rpm * 0.35), t, 0.05)
+    const level = eng.cut > 0 ? 0.04 : 0.09 + 0.06 * rpm + 0.09 * load
+    eng.body.gain.setTargetAtTime(level, t, eng.cut > 0 ? 0.01 : 0.06)
+
+    // Off the throttle at speed the pipes pop and crackle on the overrun.
+    if (!throttle && rpm > 0.35 && v > 8 && Math.random() < dt * 7) bang(t + Math.random() * 0.03, 0.15 + Math.random() * 0.3)
 
     const sq = v > 2 ? skid : 0
     eng.squeal.gain.setTargetAtTime(sq * 0.11, t, 0.05)
@@ -206,24 +273,34 @@ export function createAudio() {
     eng.rumble.gain.setTargetAtTime(off ? Math.min(1, v / 8) * 0.22 : 0, t, 0.1)
   }
 
-  // Exhaust crackle on lift-off: a handful of short, dark bangs.
+  // One crack from the exhaust: a short, dark burst of noise with a thump under it.
+  function bang(t, vol) {
+    const s = noiseSrc()
+    const bp = filter('bandpass', 300 + Math.random() * 600, 1.2)
+    const g = gain(0)
+    s.connect(bp)
+    bp.connect(g)
+    g.connect(sfx)
+    g.gain.setValueAtTime(0, t)
+    g.gain.linearRampToValueAtTime(vol, t + 0.003)
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.04 + Math.random() * 0.05)
+    s.start(t, Math.random())
+    s.stop(t + 0.12)
+    const o = ctx.createOscillator()
+    o.frequency.setValueAtTime(110, t)
+    o.frequency.exponentialRampToValueAtTime(45, t + 0.06)
+    const og = gain(0, sfx)
+    o.connect(og)
+    og.gain.setValueAtTime(vol * 0.8, t)
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.08)
+    o.start(t)
+    o.stop(t + 0.1)
+  }
+  // Lift-off at speed: a quick volley of bangs.
   function pop() {
     if (!live) return
-    const n = 3 + Math.floor(Math.random() * 4)
-    for (let i = 0; i < n; i++) {
-      const t = ctx.currentTime + 0.05 + Math.random() * 0.5
-      const s = noiseSrc()
-      const bp = filter('bandpass', 350 + Math.random() * 500, 1.5)
-      const g = gain(0)
-      s.connect(bp)
-      bp.connect(g)
-      g.connect(sfx)
-      g.gain.setValueAtTime(0, t)
-      g.gain.linearRampToValueAtTime(0.5 + Math.random() * 0.4, t + 0.004)
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.05 + Math.random() * 0.05)
-      s.start(t, Math.random())
-      s.stop(t + 0.12)
-    }
+    const n = 4 + Math.floor(Math.random() * 4)
+    for (let i = 0; i < n; i++) bang(ctx.currentTime + 0.04 + Math.random() * 0.55, 0.35 + Math.random() * 0.4)
   }
 
   // ---------- chimes ----------
