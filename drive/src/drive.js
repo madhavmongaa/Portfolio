@@ -7,6 +7,7 @@ import {
 import { createCar, loadModel } from './world/car.js'
 import { createFx } from './world/fx.js'
 import { createRoutes } from './world/route.js'
+import { createStuds, createGates, createMist } from './world/scenery.js'
 
 const BG = 0x0e0f11
 const COUNT = projects.length
@@ -143,6 +144,11 @@ const ROAD_FRAG = /* glsl */ `
     col += AMBER * body * dashes * (0.10 + 0.65 * near) * lit;
     col += AMBER * body * route * 0.05; // a faint unbroken thread between the dashes
     col += AMBER * stops(vP.xz) + carGlow(vP.xz);
+    // Under braking the taillights catch the road surface in a long red streak.
+    vec2 bd = vP.xz - (uCar - uDir * 2.0);
+    float bAlong = dot(bd, uDir) + 6.0;
+    float bSide = bd.x * uDir.y - bd.y * uDir.x;
+    col += vec3(0.95, 0.09, 0.06) * exp(-(bAlong * bAlong / 26.0 + bSide * bSide / 1.1)) * uBrake * 0.2;
     gl_FragColor = vec4(fogged(col), 1.0);
   }
 `
@@ -270,6 +276,11 @@ export function createDrive({ reduced }) {
   const routes = createRoutes(loopPts, spurPts, loopCurve.getLength(), spurCurve.getLength())
   const stopLoc = stopList.map((st) => routes.locate(...st.pos))
 
+  // Set dressing
+  const studScale = createStuds(scene, [{ curve: loopCurve, skipStart: 0 }, { curve: spurCurve, skipStart: 9 }], uniforms)
+  const gates = createGates(scene, stopList.map((st) => ({ x: st.pos[0], z: st.pos[1], heading: roadHeading(...st.pos) })))
+  createMist(scene, uniforms)
+
   // Marker beams and their labels
   const beamGeo = new THREE.CylinderGeometry(0.2, 0.2, 46, 8, 1, true)
   beamGeo.translate(0, 23, 0)
@@ -315,7 +326,7 @@ export function createDrive({ reduced }) {
   const pmrem = new THREE.PMREMGenerator(renderer)
   scene.environment = pmrem.fromScene(studio, 0.02).texture
   pmrem.dispose()
-  loadModel(parts).then((setTail) => (parts.setTail = setTail)).catch((err) => console.warn('Car model did not load; keeping the stand-in.', err))
+  loadModel(parts).then((api) => (parts.api = api)).catch((err) => console.warn('Car model did not load; keeping the stand-in.', err))
   const state = {
     x: START.x, z: START.z, th: START.heading, vx: 0, vz: 0, vf: 0, vl: 0,
     w: 0, // yaw rate
@@ -327,18 +338,28 @@ export function createDrive({ reduced }) {
   // ---------- minimap ----------
   const mapEl = $('map')
   const path = (pts) => pts.map(([x, z], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${z.toFixed(1)}`).join('')
-  mapEl.innerHTML = `<svg viewBox="-125 -125 250 255" role="group">
+  const TRAIL = 80 // samples, one every quarter second: the last 20 seconds
+  mapEl.innerHTML = `<svg viewBox="-125 -125 250 250" role="group">
+    <g class="world">
     <path class="road" d="${path(loopPts)}Z"/><path class="road" d="${path(spurPts)}"/>
+    <g class="trail">${'<line/>'.repeat(TRAIL - 1)}</g>
     ${stopList
       .map(
         (s, i) => `<g class="stop" data-i="${i}" role="button" tabindex="0" aria-label="Go to ${projects[i].title}">
-        <circle cx="${s.pos[0]}" cy="${s.pos[1]}" r="20"/><circle cx="${s.pos[0]}" cy="${s.pos[1]}" r="7"/></g>`,
+        <circle class="hit" cx="${s.pos[0]}" cy="${s.pos[1]}" r="20"/><circle class="dot" cx="${s.pos[0]}" cy="${s.pos[1]}" r="7"/>
+        <text class="lbl" x="${s.pos[0] - 13}" y="${s.pos[1] + 6}" text-anchor="end">${num(i)} ${projects[i].title}</text></g>`,
       )
       .join('')}
     <path class="car" d="M0 11 L6 -7 L0 -3 L-6 -7Z"/>
+    </g>
   </svg>`
+  const mapWorld = mapEl.querySelector('.world')
   const mapCar = mapEl.querySelector('.car')
   const mapStops = [...mapEl.querySelectorAll('.stop')]
+  const mapLabels = [...mapEl.querySelectorAll('.lbl')]
+  const trailLines = [...mapEl.querySelectorAll('.trail line')]
+  const trail = [] // [x, z] samples, newest last
+  let trailTimer = 0
 
   // ---------- progress ----------
   // Which stops this visitor has pulled up at. Kept in the browser so a
@@ -617,6 +638,7 @@ export function createDrive({ reduced }) {
 
     // Wheelspin when pulling away hard from a near stop.
     if (throttle && !state.throttle && vf < 3) state.launch = 0.7
+    if (!throttle && state.throttle && vf > 20 && !reduced) parts.api?.pop() // lift-off crackle
     state.launch = Math.max(0, state.launch - dt)
     state.throttle = throttle
 
@@ -754,7 +776,8 @@ export function createDrive({ reduced }) {
     uniforms.uCar.value.set(x + fx * 2, z + fz * 2)
     uniforms.uDir.value.set(fx, fz)
     uniforms.uBrake.value += (state.braking - uniforms.uBrake.value) * Math.min(1, dt * 12)
-    parts.setTail?.(uniforms.uBrake.value)
+    parts.api?.tail(uniforms.uBrake.value)
+    parts.api?.frame(dt, state.vf)
 
     // Which stop are we at? Leave radius is wider than enter radius so it doesn't flicker.
     let now = -1
@@ -778,6 +801,7 @@ export function createDrive({ reduced }) {
     guideFrame(dt)
     markers.forEach((m, i) => {
       m.on.value += ((i === active ? 1 : 0) - m.on.value) * Math.min(1, dt * 4)
+      gates[i](m.on.value)
     })
 
     // Camera
@@ -819,6 +843,34 @@ export function createDrive({ reduced }) {
       if (show) m.el.style.transform = `translate(${((tmp.x + 1) * 0.5 * w + 8).toFixed(1)}px, ${sy.toFixed(1)}px)`
     }
     mapCar.setAttribute('transform', `translate(${x.toFixed(1)} ${z.toFixed(1)}) rotate(${((-th * 180) / Math.PI).toFixed(1)})`)
+
+    // Heading-up: the map turns so the car always points up, and the labels
+    // turn back so they stay level. Reduced motion keeps north up.
+    if (!reduced) {
+      const deg = -90 - (Math.atan2(Math.cos(state.camTh), Math.sin(state.camTh)) * 180) / Math.PI
+      mapWorld.setAttribute('transform', `rotate(${deg.toFixed(1)})`)
+      mapLabels.forEach((t, i) => t.setAttribute('transform', `rotate(${(-deg).toFixed(1)} ${stopList[i].pos[0]} ${stopList[i].pos[1]})`))
+    }
+
+    // Trail: where the car has been in the last 20 seconds, fading with age.
+    trailTimer -= dt
+    if (trailTimer <= 0) {
+      trailTimer = 0.25
+      const lastPt = trail[trail.length - 1]
+      if (!lastPt || Math.hypot(lastPt[0] - x, lastPt[1] - z) > 0.5) trail.push([x, z])
+      else trail.push(lastPt) // standing still: let the old trail age out
+      if (trail.length > TRAIL) trail.shift()
+      trailLines.forEach((ln, k) => {
+        const a = trail[trail.length - 2 - k]
+        const b = trail[trail.length - 1 - k]
+        if (!a || (a[0] === b[0] && a[1] === b[1])) return ln.setAttribute('opacity', 0)
+        ln.setAttribute('x1', a[0].toFixed(1))
+        ln.setAttribute('y1', a[1].toFixed(1))
+        ln.setAttribute('x2', b[0].toFixed(1))
+        ln.setAttribute('y2', b[1].toFixed(1))
+        ln.setAttribute('opacity', (0.75 * (1 - k / (TRAIL - 1))).toFixed(2))
+      })
+    }
   }
 
   // ---------- loop ----------
@@ -849,6 +901,7 @@ export function createDrive({ reduced }) {
     step(dt)
     place(dt)
     effects.update(dt, camera, renderer.domElement.height)
+    studScale.value = renderer.domElement.height / (2 * Math.tan((camera.fov * Math.PI) / 360))
     if (!reduced) uniforms.uTime.value += dt // the dashes stay still for reduced motion
     renderer.render(scene, camera)
 

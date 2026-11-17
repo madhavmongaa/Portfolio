@@ -109,11 +109,15 @@ function splitWheels(car, mesh) {
       if (uv) g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
       g.computeBoundingBox()
       const c = g.boundingBox.getCenter(new THREE.Vector3())
+      const size = g.boundingBox.getSize(new THREE.Vector3())
       g.translate(-c.x, -c.y, -c.z)
       const w = new THREE.Mesh(g, mesh.material)
       w.position.copy(c)
       w.rotation.order = 'YXZ'
       w.userData.front = c.z > 0
+      w.userData.radius = Math.max(size.y, size.z) / 2
+      w.userData.width = size.x
+      w.userData.side = Math.sign(c.x)
       car.add(w)
       return w
     })
@@ -122,6 +126,9 @@ function splitWheels(car, mesh) {
 const FLIP = Math.PI // the file's nose points the other way from our +z
 const TAIL_Y = 0.86 // height of the rear light bar
 const LENGTH = 4.5 // metres, a 991-generation 911
+const HEAD_X = 0.6 // headlamp centres, across and up
+const HEAD_Y = 0.66
+const BEAM = 15 // length of the visible headlight beam
 
 // Swap the box car for the Porsche 911 Carrera S model once it has downloaded.
 // Model: "Porsche 911 Carrera S (991.2)" by Mona x Supercars, CC BY 4.0.
@@ -199,10 +206,102 @@ export async function loadModel({ car, wheels, stand }) {
     s.scale.set(1.1, 0.7, 1)
     car.add(s)
   }
-  // brake: 0 cruising, 1 braking
-  return (brake) => {
-    halo.opacity = 0.55 + 0.45 * brake
-    barMat.color.setRGB(0.75 + 0.25 * brake, 0.1, 0.05)
+  // ---------- headlights ----------
+  // A warm glow at each lamp and a faint beam ahead of it, which shows most
+  // where it passes through tyre smoke and mist.
+  const headHalo = new THREE.SpriteMaterial({
+    map: halo.map, color: 0xfff1dc, transparent: true, opacity: 0.9,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  })
+  const beamGeo = new THREE.ConeGeometry(2.6, BEAM, 28, 1, true)
+  beamGeo.translate(0, -BEAM / 2, 0) // apex at the lamp
+  beamGeo.rotateX(-Math.PI / 2) // pointing forward (+z)
+  const beamMat = new THREE.ShaderMaterial({
+    uniforms: { uLen: { value: BEAM } },
+    vertexShader: /* glsl */ `
+      uniform float uLen;
+      varying float vT;
+      varying float vFace;
+      void main() {
+        vT = position.z / uLen;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vec3 n = normalize(normalMatrix * normal);
+        vFace = abs(dot(n, normalize(-mv.xyz)));
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */ `
+      varying float vT;
+      varying float vFace;
+      void main() {
+        float a = pow(1.0 - clamp(vT, 0.0, 1.0), 1.6) * smoothstep(0.0, 0.08, vT) * pow(vFace, 1.5) * 0.07;
+        gl_FragColor = vec4(vec3(1.0, 0.94, 0.84) * a, 1.0);
+      }`,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+  })
+  for (const x of [-HEAD_X, HEAD_X]) {
+    const s = new THREE.Sprite(headHalo)
+    s.position.set(x, HEAD_Y, LENGTH / 2 - 0.02)
+    s.scale.set(0.42, 0.28, 1)
+    const beam = new THREE.Mesh(beamGeo, beamMat)
+    beam.position.set(x, HEAD_Y, LENGTH / 2 - 0.1)
+    beam.rotation.x = 0.07 // aimed slightly down at the road
+    beam.renderOrder = 3
+    car.add(s, beam)
+  }
+
+  // ---------- exhaust pops ----------
+  const popMat = new THREE.SpriteMaterial({
+    map: halo.map, color: 0xff7a26, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  })
+  const pops = [-0.42, 0.42].map((x) => {
+    const s = new THREE.Sprite(popMat)
+    s.position.set(x, 0.34, -LENGTH / 2 - 0.12)
+    car.add(s)
+    return s
+  })
+  let popTime = 0
+
+  // ---------- wheel speed blur ----------
+  // A soft disc over each wheel's outer face that fades in with speed, so the
+  // rims smear instead of strobing.
+  const bc = document.createElement('canvas')
+  bc.width = bc.height = 128
+  const bg = bc.getContext('2d')
+  const rg = bg.createRadialGradient(64, 64, 4, 64, 64, 64)
+  rg.addColorStop(0, 'rgba(40,41,44,0.9)')
+  rg.addColorStop(0.18, 'rgba(70,72,76,0.75)')
+  rg.addColorStop(0.62, 'rgba(52,54,58,0.7)')
+  rg.addColorStop(0.7, 'rgba(18,18,20,0.85)')
+  rg.addColorStop(0.97, 'rgba(10,10,11,0.85)')
+  rg.addColorStop(1, 'rgba(10,10,11,0)')
+  bg.fillStyle = rg
+  bg.fillRect(0, 0, 128, 128)
+  const blurMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(bc), transparent: true, opacity: 0, depthWrite: false })
+  for (const w of wheels) {
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(w.userData.radius * 0.98, 32), blurMat)
+    disc.rotation.y = (w.userData.side * Math.PI) / 2 // faces outward
+    disc.position.x = w.userData.side * (w.userData.width / 2 + 0.006)
+    w.add(disc)
+  }
+
+  return {
+    // brake: 0 cruising, 1 braking
+    tail(brake) {
+      halo.opacity = 0.55 + 0.45 * brake
+      barMat.color.setRGB(0.75 + 0.25 * brake, 0.1, 0.05)
+    },
+    // A few pops from the exhaust, e.g. when lifting off at speed.
+    pop() {
+      popTime = 0.55
+    },
+    frame(dt, speed) {
+      blurMat.opacity = Math.min(0.92, Math.max(0, (Math.abs(speed) - 7) / 12))
+      popTime = Math.max(0, popTime - dt)
+      const on = popTime > 0 && Math.random() < 0.4
+      popMat.opacity = on ? 0.5 + Math.random() * 0.5 : 0
+      for (const s of pops) s.scale.setScalar(on ? 0.25 + Math.random() * 0.45 : 0.01)
+    },
   }
 }
 
