@@ -76,7 +76,7 @@ html.drive.ready, html.drive.ready body { overflow: hidden; height: 100%; }
 
 #panel {
   position: absolute; z-index: 2; right: var(--pad); top: 76px; width: min(400px, calc(100vw - 2 * var(--pad)));
-  max-height: calc(100% - 76px - 172px); overflow: auto; /* ends above the minimap */
+  max-height: calc(100% - 76px - 196px); overflow: auto; /* ends above the minimap */
   padding: 26px 28px 30px; background: rgb(20 21 24 / 0.92); border-top: 1px solid var(--amber);
   backdrop-filter: blur(6px); user-select: text; -webkit-user-select: text;
   scrollbar-width: thin; scrollbar-color: var(--line) transparent;
@@ -92,11 +92,32 @@ html.drive.ready, html.drive.ready body { overflow: hidden; height: 100%; }
 #map .road { fill: none; stroke: var(--line); stroke-width: 3; }
 #map .stop { cursor: pointer; }
 #map .stop circle:first-child { fill: transparent; }
-#map .stop circle:last-child { fill: var(--amber); opacity: 0.55; }
+#map .stop circle:last-child { fill: none; stroke: var(--amber); stroke-width: 2.5; opacity: 0.7; }
+#map .stop.seen circle:last-child { fill: var(--amber); stroke: none; opacity: 0.55; }
+#map .stop.next circle:last-child { stroke: var(--text); stroke-width: 3; opacity: 1; }
 #map .stop:hover circle:last-child, #map .stop.on circle:last-child { opacity: 1; }
 #map .car { fill: var(--text); }
 
-#hint { position: absolute; left: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 22px); color: var(--dim); transition: opacity 0.6s; }
+#hint { position: absolute; left: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 58px); color: var(--dim); transition: opacity 0.6s; }
+
+/* next-stop guide and progress */
+#guide {
+  position: absolute; left: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 20px);
+  max-width: calc(100% - 2 * var(--pad) - 156px);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--text);
+}
+#guide .arrow { width: 14px; height: 14px; flex: none; fill: var(--amber); }
+#guide .go, #panel .next { font: inherit; color: var(--amber); cursor: pointer; }
+#guide .go { background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 0.2em; }
+#guide .go:hover { color: var(--text); }
+#progress { position: absolute; right: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 162px); width: 132px; text-align: right; color: var(--dim); }
+#panel .next {
+  display: block; width: 100%; margin-top: 24px; padding: 11px 12px; text-align: left;
+  background: transparent; border: 1px solid var(--line); border-radius: 2px;
+}
+#panel .next:hover { border-color: var(--amber); }
+/* Stays in view at the panel's bottom edge while the text scrolls. */
+#panel .next { position: sticky; bottom: -30px; background: rgb(20 21 24); box-shadow: 0 -18px 18px rgb(20 21 24 / 0.92); }
 #hint.gone { opacity: 0; }
 #notice { position: absolute; left: var(--pad); top: 64px; color: var(--dim); }
 
@@ -108,7 +129,9 @@ html.drive.ready, html.drive.ready body { overflow: hidden; height: 100%; }
   #brake { height: 64px; align-self: flex-end; }
   #gas { height: 104px; }
   #map { bottom: auto; top: calc(env(safe-area-inset-top) + 56px); width: 96px; height: 96px; }
-  #hint { bottom: calc(env(safe-area-inset-bottom) + 140px); }
+  #hint { bottom: calc(env(safe-area-inset-bottom) + 176px); }
+  #guide { bottom: calc(env(safe-area-inset-bottom) + 132px); max-width: calc(100% - 2 * var(--pad)); }
+  #progress { bottom: auto; top: calc(env(safe-area-inset-top) + 160px); width: 96px; }
 }
 @media (max-width: 720px) {
   #panel {
@@ -118,7 +141,7 @@ html.drive.ready, html.drive.ready body { overflow: hidden; height: 100%; }
   }
   #panel h2 { font-size: 28px; }
   @keyframes up { from { opacity: 0; transform: translateY(24px); } }
-  html.panel-open #hint { opacity: 0; }
+  html.panel-open #hint, html.panel-open #guide { opacity: 0; pointer-events: none; }
   html.panel-open #pedals { z-index: 3; opacity: 0.5; }
 }
 

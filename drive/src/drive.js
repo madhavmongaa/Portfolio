@@ -6,8 +6,10 @@ import {
 } from './world/terrain.js'
 import { createCar, loadModel } from './world/car.js'
 import { createFx } from './world/fx.js'
+import { createRoutes } from './world/route.js'
 
 const BG = 0x0e0f11
+const COUNT = projects.length
 const root = document.documentElement
 const $ = (id) => document.getElementById(id)
 
@@ -21,7 +23,7 @@ const COMMON = /* glsl */ `
   const vec3 AMBER = vec3(0.910, 0.639, 0.239);
   uniform vec2 uCar;
   uniform vec2 uDir;
-  uniform vec2 uStops[5];
+  uniform vec2 uStops[${COUNT}];
   uniform float uActive;
   uniform float uBrake;
   varying vec3 vP;
@@ -39,7 +41,7 @@ const COMMON = /* glsl */ `
   // Amber survey rings around each stop. The first stop gets three, for sorting.
   float stops(vec2 p) {
     float a = 0.0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < ${COUNT}; i++) {
       float d = length(p - uStops[i]);
       float on = float(i) == uActive ? 1.0 : 0.4;
       a += on * (ring(d, ${STOP_RADIUS.toFixed(1)}) * 0.8 + exp(-d * d / 90.0) * 0.08);
@@ -115,6 +117,8 @@ const GROUND_FRAG = /* glsl */ `
 const ROAD_FRAG = /* glsl */ `
   ${COMMON}
   uniform float uTime;
+  uniform vec3 uRoute; // from, to (arc length along this road), on
+  uniform float uLen;
   varying vec2 vUv;
   varying float vLine;
   varying vec2 vTan;
@@ -132,7 +136,12 @@ const ROAD_FRAG = /* glsl */ `
     float way = dot(vTan, uDir) < 0.0 ? -1.0 : 1.0;
     float dashes = step(fract(vUv.y / 3.2 - way * uTime * 1.1), 0.55);
     float near = exp(-length(vP.xz - uCar) / 38.0);
-    col += AMBER * body * dashes * (0.10 + 0.65 * near);
+    // The way to the next stop is lit; the rest of the line fades back.
+    float span = mod(uRoute.y - uRoute.x, uLen);
+    float route = uRoute.z * step(mod(vUv.y - uRoute.x, uLen), span);
+    float lit = mix(uRoute.z > 0.5 ? 0.35 : 1.0, 1.35, route);
+    col += AMBER * body * dashes * (0.10 + 0.65 * near) * lit;
+    col += AMBER * body * route * 0.05; // a faint unbroken thread between the dashes
     col += AMBER * stops(vP.xz) + carGlow(vP.xz);
     gl_FragColor = vec4(fogged(col), 1.0);
   }
@@ -243,15 +252,23 @@ export function createDrive({ reduced }) {
   scene.add(new THREE.Mesh(groundGeo, new THREE.ShaderMaterial({ uniforms, vertexShader: VERT, fragmentShader: GROUND_FRAG })))
 
   // Road
-  const roadMat = new THREE.ShaderMaterial({
-    uniforms, vertexShader: ROAD_VERT, fragmentShader: ROAD_FRAG,
-    side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-  })
+  const roadMat = (len) =>
+    new THREE.ShaderMaterial({
+      uniforms: { ...uniforms, uRoute: { value: new THREE.Vector3() }, uLen: { value: len } },
+      vertexShader: ROAD_VERT, fragmentShader: ROAD_FRAG,
+      side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    })
   const loopPts = []
   const spurPts = []
-  scene.add(new THREE.Mesh(ribbon(toCurve(LOOP, true), 0.14, loopPts), roadMat))
-  scene.add(new THREE.Mesh(ribbon(toCurve(SPUR, false), 0.17, spurPts), roadMat))
+  const loopCurve = toCurve(LOOP, true)
+  const spurCurve = toCurve(SPUR, false)
+  const loopMat = roadMat(loopCurve.getLength())
+  const spurMat = roadMat(spurCurve.getLength() + 1) // +1: the spur never wraps
+  scene.add(new THREE.Mesh(ribbon(loopCurve, 0.14, loopPts), loopMat))
+  scene.add(new THREE.Mesh(ribbon(spurCurve, 0.17, spurPts), spurMat))
   const roadPts = [...loopPts, ...spurPts]
+  const routes = createRoutes(loopPts, spurPts, loopCurve.getLength(), spurCurve.getLength())
+  const stopLoc = stopList.map((st) => routes.locate(...st.pos))
 
   // Marker beams and their labels
   const beamGeo = new THREE.CylinderGeometry(0.2, 0.2, 46, 8, 1, true)
@@ -323,15 +340,65 @@ export function createDrive({ reduced }) {
   const mapCar = mapEl.querySelector('.car')
   const mapStops = [...mapEl.querySelectorAll('.stop')]
 
+  // ---------- progress ----------
+  // Which stops this visitor has pulled up at. Kept in the browser so a
+  // returning visitor picks up where they left off; works without it too.
+  const STORE = 'mm-visited'
+  const visited = new Set()
+  try {
+    for (const id of JSON.parse(localStorage.getItem(STORE) || '[]')) {
+      const i = projects.findIndex((p) => p.id === id)
+      if (i >= 0) visited.add(i)
+    }
+  } catch {}
+  let lastSeen = -1 // most recent stop reached, so "next" follows on from it
+  const allSeen = () => visited.size === COUNT
+  const progressEl = $('progress')
+  const guide = $('guide')
+  guide.innerHTML = `<svg class="arrow" viewBox="-8 -8 16 16" aria-hidden="true"><path d="M0 -6 L5 4 L0 1.5 L-5 4Z"/></svg><span class="text"></span><button type="button" class="go"></button>`
+  const guideArrow = guide.querySelector('.arrow')
+  const guideText = guide.querySelector('.text')
+  const guideGo = guide.querySelector('.go')
+  let unlockedNote = 0 // seconds left on the "drift unlocked" note
+
+  function markSeen(i) {
+    lastSeen = i
+    if (visited.has(i)) return
+    visited.add(i)
+    try {
+      localStorage.setItem(STORE, JSON.stringify([...visited].map((k) => projects[k].id)))
+    } catch {}
+    if (allSeen()) unlockedNote = 8
+    showProgress()
+  }
+  function showProgress() {
+    progressEl.textContent = `${visited.size} / ${COUNT} seen`
+    mapStops.forEach((g, i) => g.classList.toggle('seen', visited.has(i)))
+  }
+  showProgress()
+
+  // The next stop to suggest: the first one not yet seen, counting on from
+  // the last stop reached. Once all are seen, simply the one after it.
+  function nextStop(from = lastSeen) {
+    for (let s = 1; s <= COUNT; s++) {
+      const i = (((from + s) % COUNT) + COUNT) % COUNT
+      if (!visited.has(i)) return i
+    }
+    return from < 0 ? 0 : (from + 1) % COUNT
+  }
+
   // ---------- input ----------
   const keys = new Set()
   const touch = { steer: 0, gas: false, brake: false, id: null, x0: 0 }
-  let auto = null // index of the stop being driven to
+  // Self-driving: { i, path, k } follows the road to stop i; { i } with no
+  // path just rolls the last few metres into a stop the car is coasting toward.
+  let auto = null
+  let glided = -1 // stop the car last glided into, so it doesn't pull in again
   const hint = $('hint')
   const coarse = matchMedia('(pointer: coarse)').matches
   hint.textContent = coarse
     ? 'Drag on the left to steer. Pedals on the right.'
-    : 'WASD or arrow keys to drive, space to drift. Pull up to a light.'
+    : 'WASD or arrow keys to drive. Lift off near a light to pull in.'
   const touched = () => {
     auto = null
     hint.classList.add('gone')
@@ -415,8 +482,12 @@ export function createDrive({ reduced }) {
       state.camTh = state.th
       auto = null
       snapCamera = true
-    } else auto = i
+    } else {
+      const r = routes.between(routes.locate(state.x, state.z), stopLoc[i])
+      auto = { i, path: r.pts, k: 0 }
+    }
   }
+  guideGo.addEventListener('click', () => goTo(nextStop()))
   mapStops.forEach((g) => {
     const i = +g.dataset.i
     g.addEventListener('click', () => goTo(i))
@@ -443,7 +514,14 @@ export function createDrive({ reduced }) {
   let dismissed = -1
   let panelOpen = false
   function openPanel(i) {
-    panel.innerHTML = panelHtml(projects[i], i, projects.length)
+    const n = nextStop(i)
+    panel.innerHTML =
+      panelHtml(projects[i], i, projects.length) +
+      `<button type="button" class="next mono">Next stop · ${num(n)} ${projects[n].title} →</button>`
+    panel.querySelector('.next').addEventListener('click', () => {
+      closePanel(true)
+      goTo(n)
+    })
     panel.hidden = false
     panel.scrollTop = 0
     panelOpen = true
@@ -469,25 +547,56 @@ export function createDrive({ reduced }) {
   function step(dt) {
     let throttle = keys.has('KeyW') || keys.has('ArrowUp') || touch.gas ? 1 : 0
     let brake = keys.has('KeyS') || keys.has('ArrowDown') || touch.brake ? 1 : 0
-    const hand = keys.has('Space')
+    const hand = keys.has('Space') && allSeen() // drifting is the reward for seeing every stop
     let steer =
       (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) - (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) + touch.steer
 
-    if (auto !== null) {
-      const [tx, tz] = stopList[auto].pos
-      const dx = tx - state.x
-      const dz = tz - state.z
-      const dist = Math.hypot(dx, dz)
-      steer = THREE.MathUtils.clamp(wrap(Math.atan2(dx, dz) - state.th) * 2.2, -1, 1)
-      const cruise = dist > 30 ? 26 : Math.max(5, dist * 0.8)
+    if (auto?.path) {
+      // Follow the road: aim at a point a little way ahead along the route.
+      const { path } = auto
+      let best = Infinity
+      for (let k = auto.k; k < Math.min(path.length, auto.k + 25); k++) {
+        const d = (path[k][0] - state.x) ** 2 + (path[k][1] - state.z) ** 2
+        if (d < best) [best, auto.k] = [d, k]
+      }
+      const ahead = path[Math.min(path.length - 1, auto.k + 4 + Math.round(Math.abs(state.vf) * 0.25))]
+      const left = (path.length - 1 - auto.k) * 1.5
+      steer = THREE.MathUtils.clamp(wrap(Math.atan2(ahead[0] - state.x, ahead[1] - state.z) - state.th) * 2.2, -1, 1)
+      const cruise = left > 40 ? 22 : Math.max(4, left * 0.55)
       throttle = state.vf < cruise ? 1 : 0
       brake = state.vf > cruise + 3 ? 1 : 0
-      if (dist < 5) {
+      if (left < 4) {
         throttle = 0
         brake = state.vf > 0.5 ? 1 : 0
         if (state.vf <= 0.5) auto = null
       }
+    } else if (auto) {
+      // Gliding in: roll to a stop at the light.
+      const [tx, tz] = stopList[auto.i].pos
+      const dx = tx - state.x
+      const dz = tz - state.z
+      const dist = Math.hypot(dx, dz)
+      steer = THREE.MathUtils.clamp(wrap(Math.atan2(dx, dz) - state.th) * 2.2, -1, 1)
+      throttle = 0
+      const want = Math.max(2.5, dist * 0.7)
+      brake = state.vf > want ? 1 : 0
+      if (dist < 4 || state.vf <= 0.4) auto = null
+    } else if (!throttle && !brake && state.vf > 2 && state.vf < 24) {
+      // Coasting toward a stop that is close and ahead: pull in on our own.
+      const fx = Math.sin(state.th)
+      const fz = Math.cos(state.th)
+      stopList.forEach((st, i) => {
+        if (auto || i === glided) return
+        const dx = st.pos[0] - state.x
+        const dz = st.pos[1] - state.z
+        const dist = Math.hypot(dx, dz)
+        if (dist > 4 && dist < 26 && (dx * fx + dz * fz) / dist > 0.55) {
+          auto = { i }
+          glided = i
+        }
+      })
     }
+    if (glided >= 0 && Math.hypot(stopList[glided].pos[0] - state.x, stopList[glided].pos[1] - state.z) > 34) glided = -1
     steer = THREE.MathUtils.clamp(steer, -1, 1)
 
     // Split velocity into along-the-car and sideways parts.
@@ -500,7 +609,7 @@ export function createDrive({ reduced }) {
     // loose. Sideways grip then drops and the car turns faster than it travels,
     // so it slides. Counter-steer and throttle hold the slide; it ends once the
     // car is pointing where it is going again.
-    if (!state.drift && vf > 9 && (hand || (brake && Math.abs(steer) > 0.5 && vf > 16))) {
+    if (!state.drift && vf > 9 && (hand || (allSeen() && brake && Math.abs(steer) > 0.5 && vf > 16))) {
       state.drift = true
       state.w += steer * 0.45 // the kick that starts the slide
     }
@@ -562,6 +671,53 @@ export function createDrive({ reduced }) {
     }
   }
 
+  // ---------- guide ----------
+  // One line at the bottom: where the next stop is and how far by road,
+  // with the road itself lit along the way.
+  let guideKey = ''
+  let routeTimer = 0
+  let route = null
+  function guideFrame(dt) {
+    unlockedNote = Math.max(0, unlockedNote - dt)
+    const done = allSeen()
+    const target = auto ? auto.i : nextStop()
+    // Re-plan the route a few times a second; it only changes as the car moves along.
+    routeTimer -= dt
+    if (routeTimer <= 0 || !route || route.target !== target) {
+      routeTimer = 0.25
+      route = { target, ...routes.between(routes.locate(state.x, state.z), stopLoc[target]) }
+      const show = !done || auto
+      loopMat.uniforms.uRoute.value.set(...(route.loop || [0, 0]), show && route.loop ? 1 : 0)
+      spurMat.uniforms.uRoute.value.set(...(route.spur || [0, 0]), show && route.spur ? 1 : 0)
+    }
+    mapStops.forEach((g, i) => g.classList.toggle('next', i === target && (!done || !!auto)))
+
+    let text
+    let button = ''
+    if (unlockedNote > 0) text = coarse ? 'All seven seen. Brake while turning to drift.' : 'All seven seen. Space to drift is unlocked.'
+    else if (done && !auto) text = coarse ? 'All seven seen · brake while turning to drift' : 'All seven seen · space to drift'
+    else {
+      const m = Math.max(10, Math.round(route.length / 10) * 10)
+      text = `${auto ? 'Driving to' : 'Next'} · ${num(target)} ${projects[target].title} · ${m} m`
+      if (!auto) button = visited.size === 0 && lastSeen < 0 ? 'Take the tour' : 'Drive me there'
+    }
+    const key = text + button
+    if (key !== guideKey) {
+      guideKey = key
+      guideText.textContent = text
+      guideGo.textContent = button
+      guideGo.hidden = !button
+    }
+    // Arrow: points at the stop relative to the way the car faces (up = ahead).
+    const showArrow = !done || !!auto
+    guideArrow.style.visibility = showArrow && unlockedNote <= 0 ? 'visible' : 'hidden'
+    if (showArrow) {
+      const [tx, tz] = stopList[target].pos
+      const rel = wrap(Math.atan2(tx - state.x, tz - state.z) - state.th)
+      guideArrow.style.transform = `rotate(${((-rel * 180) / Math.PI).toFixed(1)}deg)`
+    }
+  }
+
   // ---------- per-frame placement ----------
   const camTarget = new THREE.Vector3()
   const look = new THREE.Vector3()
@@ -613,8 +769,13 @@ export function createDrive({ reduced }) {
       if (now < 0) {
         dismissed = -1
         closePanel(false)
-      } else if (now !== dismissed) openPanel(now)
+      } else {
+        markSeen(now)
+        glided = now // don't pull back into this stop when coasting away from it
+        if (now !== dismissed) openPanel(now)
+      }
     }
+    guideFrame(dt)
     markers.forEach((m, i) => {
       m.on.value += ((i === active ? 1 : 0) - m.on.value) * Math.min(1, dt * 4)
     })
