@@ -52,5 +52,23 @@ async function apply() {
   scrollTo(0, 0)
 }
 
+// Preview loops: play while visible, pause when not. With reduced motion they
+// stay on the poster and get controls instead.
+const seen = new IntersectionObserver((entries) => {
+  for (const { target: v, isIntersecting } of entries) {
+    if (isIntersecting) v.play().catch(() => {})
+    else v.pause()
+  }
+})
+function watchReels() {
+  for (const v of document.querySelectorAll('video.reel:not([data-w])')) {
+    v.dataset.w = ''
+    if (reduced) v.controls = true
+    else seen.observe(v)
+  }
+}
+new MutationObserver(watchReels).observe(document.body, { childList: true, subtree: true })
+watchReels()
+
 addEventListener('hashchange', apply)
 apply()

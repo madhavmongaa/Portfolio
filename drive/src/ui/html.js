@@ -17,8 +17,15 @@ export function bodyHtml(p) {
   const credit = p.credit
     ? `<p class="credit"><a href="${esc(p.credit.href)}" target="_blank" rel="noopener">${esc(p.credit.text)}</a></p>`
     : ''
+  const facts = p.facts?.length
+    ? `<dl class="meta">${p.facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v.map(esc).join(' · ')}</dd>`).join('')}</dl>`
+    : ''
+  // Loaded and played only when on screen (see main.js); the poster shows until then.
+  const preview = p.preview
+    ? `<figure class="preview"><video class="reel" src="${esc(p.preview.src)}" poster="${esc(p.preview.poster)}" muted loop playsinline preload="none" width="270" height="480"></video><figcaption class="mono">${esc(p.preview.label)}</figcaption></figure>`
+    : ''
   return `${p.summary.map((s) => `<p>${esc(s)}</p>`).join('')}
-<dl class="meta"><dt>${esc(p.metaLabel)}</dt><dd>${p.meta.map(esc).join(' · ')}</dd></dl>
+${preview}${facts}
 ${links}${credit}`
 }
 

@@ -46,8 +46,11 @@ html.drive.ready #list { display: none; }
 .kind { color: var(--dim); margin-top: 6px; }
 .b p, #panel p { font-size: 17px; }
 .b p + p, #panel p + p { margin-top: 12px; }
-.meta { margin-top: 20px; font-family: var(--mono); font-size: 12px; display: flex; gap: 16px; }
-.meta dt { color: var(--dim); flex: none; min-width: 64px; }
+.meta { margin-top: 20px; font-family: var(--mono); font-size: 12px; display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 8px 16px; }
+.meta dt { color: var(--dim); }
+.preview { margin: 20px 0 0; }
+.preview video { display: block; width: 144px; height: auto; aspect-ratio: 9 / 16; background: var(--surface); border: 1px solid var(--line); }
+.preview figcaption { margin-top: 8px; color: var(--dim); font-size: 11px; }
 .links { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px 24px; font-family: var(--mono); font-size: 13px; }
 @media (max-width: 720px) {
   .index > li { grid-template-columns: 40px minmax(0, 1fr); }

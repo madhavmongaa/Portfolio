@@ -546,7 +546,7 @@ export function createDrive({ reduced }) {
     // Camera
     // Same chase view either way. With reduced motion the camera is locked to
     // the car: no swing on corners, no zoom at speed, no pull-out at a stop.
-    if (!reduced) wide += ((projects[active]?.id === 'shorts' ? 1.6 : 1) - wide) * Math.min(1, dt * 1.5)
+    if (!reduced) wide += ((projects[active]?.id === 'reels' ? 1.6 : 1) - wide) * Math.min(1, dt * 1.5)
     // A longer lens from further back: less wide-angle stretch on the car.
     camTarget.set(x - fx * 15.5 * wide, 0, z - fz * 15.5 * wide)
     camTarget.y = Math.max(y + 5.2 * wide, height(camTarget.x, camTarget.z) + 2)

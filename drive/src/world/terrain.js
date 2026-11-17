@@ -7,7 +7,7 @@ export const STOPS = {
   wastewise: { pos: [-32, 34], beam: [-35, 44] },
   mandi: { pos: [70, -28], beam: [60, -31] },
   campus: { pos: [-85, -30], beam: [-95, -30] },
-  shorts: { pos: [0, -100], beam: [0, -110] },
+  reels: { pos: [0, -100], beam: [0, -110] },
   about: { pos: [0, 105], beam: [0, 114] },
 }
 

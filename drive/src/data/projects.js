@@ -1,5 +1,5 @@
 // Single source for every stop. Feeds the 3D markers, the panel and the list view.
-// Lines marked CONFIRM were written without facts from Madhav and should be checked.
+// `facts` are label/value rows shown under the summary. `preview` is a short muted loop.
 
 export const person = {
   name: 'Madhav Monga',
@@ -15,8 +15,7 @@ export const projects = [
       'Snap or describe any item and Lulu, the assistant inside the app, tells you which bin it goes in and how to prepare it.',
       'Gemini identifies the item and has to choose one of five bins that follow Indian segregation practice: dry, wet, hazardous, reject or e-waste. If it is not sure what it is looking at, it asks one question first. Points, streaks and an area leaderboard give people a reason to keep sorting. Built for the Equinox hackathon.',
     ],
-    metaLabel: 'Stack',
-    meta: ['React 19', 'TypeScript', 'Tailwind CSS', 'Gemini', 'Firebase', 'Google Maps'],
+    facts: [['Stack', ['React 19', 'TypeScript', 'Tailwind CSS', 'Gemini', 'Firebase', 'Google Maps']]],
     links: [
       { label: 'Live app', href: 'https://equinox-hackathon-wastewise-alpha.vercel.app' },
       { label: 'Source', href: 'https://github.com/madhavmongaa/equinox-hackathon-wastewise' },
@@ -27,39 +26,38 @@ export const projects = [
     title: 'Mandi',
     kind: 'Voice AI that negotiates for you',
     summary: [
-      'A voice agent that bargains with vendors on your behalf.',
-      // CONFIRM: how it works
-      'You tell it what you want and the price you would accept. It does the talking, holds the line on your number, and comes back with the deal.',
+      'A voice AI agent that negotiates prices with vendors on your behalf.',
+      'Our entry for Startup Buildathon India 2026 (Google x Hack2Skill), Delhi round. We are a team of two, I am co-founder and CEO, and we plan to build it into a company.',
     ],
-    metaLabel: 'Stack',
-    meta: ['Voice AI', 'LLM agent'], // CONFIRM
+    // ASK: stack, how it works under the hood, demo or repo link
+    facts: [
+      ['Event', ['Startup Buildathon India 2026']],
+      ['Role', ['Co-founder & CEO']],
+    ],
     links: [],
   },
   {
     id: 'campus',
     title: 'Campus Life Club',
-    kind: 'Cultural head, Zenith School of AI',
-    summary: [
-      'I lead the cultural side of the Campus Life Club at Zenith School of AI.',
-      // CONFIRM: event names and numbers
-      'That means taking an event from an idea to the day itself: the plan, the people, and whatever goes wrong an hour before it starts.',
-    ],
-    metaLabel: 'Role',
-    meta: ['Cultural head', 'Event planning', 'Team lead'],
+    kind: 'Cultural Head, Zenith School of AI (2026-27)',
+    summary: ['I run the cultural side of the Campus Life Club.'],
+    facts: [],
     links: [],
   },
   {
-    id: 'shorts',
-    title: 'Faceless 3D shorts',
-    kind: 'Blender and Claude video pipeline',
+    id: 'reels',
+    title: '3D Absurd Reels',
+    kind: 'Claude Code skill · animated 3D shorts, 100% code',
     summary: [
-      'Short 3D videos made without anyone on camera.',
-      // CONFIRM: who does what in the pipeline
-      'Claude helps write the script and the scene code, and Blender builds and renders it, so one person can take a short from idea to finished video.',
+      'A Claude Code skill that turns one idea into a finished 9:16 animated 3D short. There is no video editor, no stock footage and no AI video model: every frame, voice line and sound comes from code.',
+      'three.js scenes rendered through Remotion, an offline Kokoro voice with whisper word timing, sound effects and music synthesized in Python, and a QA script that checks every frame and the loudness before anything gets posted. Five formats, each with a full example reel: The Cloud Guy, Elevator, Crow Court, Kong’s Penny and Float Town.',
     ],
-    metaLabel: 'Stack',
-    meta: ['Blender', 'Claude', 'Python'],
-    links: [],
+    facts: [['Stack', ['three.js', 'Remotion', 'React', 'TypeScript', 'Python', 'Claude Code']]],
+    preview: { src: 'media/float-town.mp4', poster: 'media/float-town.jpg', label: 'Float Town, made with the skill' },
+    links: [
+      { label: 'Source', href: 'https://github.com/madhavmongaa/3d-absurd-reels' },
+      { label: 'Watch', href: 'https://www.instagram.com/thatssorandomfacts/' },
+    ],
   },
   {
     id: 'about',
@@ -67,10 +65,20 @@ export const projects = [
     kind: 'Madhav Monga',
     summary: [
       'I am a first-year BTech student in Artificial Intelligence at Zenith School of AI, K.R. Mangalam University, Gurugram.',
-      'I like building small AI products that do one useful thing, and making things in 3D. If you want to build something together, write to me.',
+      'I like building small AI products that do one useful thing, and making things in 3D. Away from the keyboard I beatbox and follow fashion. If you want to build something together, write to me.',
     ],
-    metaLabel: 'Based in',
-    meta: ['Gurugram, India'],
+    facts: [
+      ['Based in', ['Gurugram, India']],
+      ['Daily tools', ['Claude Code', 'GitHub Copilot']],
+      [
+        'Skills',
+        [
+          'JavaScript', 'TypeScript', 'React', 'Node.js', 'Python', 'Three.js', 'Remotion', 'Blender', 'FFmpeg',
+          'HTML', 'CSS', 'NumPy', 'Shell scripting', 'MongoDB', 'MySQL', 'SQL', 'Software Testing', 'GitHub',
+          'Claude', 'Prompt Engineering',
+        ],
+      ],
+    ],
     links: [
       { label: 'madhavmongaa@gmail.com', href: 'mailto:madhavmongaa@gmail.com' },
       { label: 'GitHub', href: 'https://github.com/madhavmongaa' },
