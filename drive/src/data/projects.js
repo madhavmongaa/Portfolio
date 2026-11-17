@@ -17,7 +17,7 @@ export const projects = [
     ],
     facts: [['Stack', ['React 19', 'TypeScript', 'Tailwind CSS', 'Gemini', 'Firebase', 'Google Maps']]],
     links: [
-      { label: 'Live app', href: 'https://equinox-hackathon-wastewise-alpha.vercel.app' },
+      { label: 'Live app', href: 'https://wastewise-2.ai.studio' },
       { label: 'Source', href: 'https://github.com/madhavmongaa/equinox-hackathon-wastewise' },
     ],
   },
@@ -37,14 +37,6 @@ export const projects = [
     links: [],
   },
   {
-    id: 'campus',
-    title: 'Campus Life Club',
-    kind: 'Cultural Head, Zenith School of AI (2026-27)',
-    summary: ['I run the cultural side of the Campus Life Club.'],
-    facts: [],
-    links: [],
-  },
-  {
     id: 'reels',
     title: '3D Absurd Reels',
     kind: 'Claude Code skill · animated 3D shorts, 100% code',
@@ -60,6 +52,45 @@ export const projects = [
     ],
   },
   {
+    id: 'angaar',
+    title: 'Angaar Pizza menu',
+    kind: 'Hindi and English menu with table ordering',
+    summary: [
+      'A pizza menu for a made-up shop, in Hindi and English. Customers scan the QR code on their table, build a pizza by dragging toppings onto it, and watch their order status change live.',
+      'Staff work from a separate page: a live order board, bills with a UPI pay code, and owner settings for prices and tables. Firestore rules decide who can do what, and 58 tests check them.',
+    ],
+    facts: [['Stack', ['HTML', 'JavaScript', 'Firebase', 'Firestore', 'Python']]],
+    links: [
+      { label: 'Live menu', href: 'https://madhavmongaa.github.io/angaar-pizza-menu/' },
+      { label: 'Source', href: 'https://github.com/madhavmongaa/angaar-pizza-menu' },
+    ],
+  },
+  {
+    id: 'beatcut',
+    title: 'beatcut',
+    kind: 'Cuts video clips to the beat',
+    summary: [
+      'Give it a folder of clips and one audio track, and it returns a single video cut on the beat.',
+      'librosa finds the beats and ffmpeg does the video work, all on your own machine. It can pick the moments with the most motion, frame each shot on the action, and put the strongest footage on the loudest beats. It runs from the command line or a small web UI.',
+    ],
+    facts: [['Stack', ['Python', 'librosa', 'FFmpeg']]],
+    links: [
+      { label: 'Project page', href: 'https://madhavmongaa.github.io/beatcut/' },
+      { label: 'Source', href: 'https://github.com/madhavmongaa/beatcut' },
+    ],
+  },
+  {
+    id: 'campus',
+    title: 'Campus Life Club',
+    kind: 'Cultural Head, Zenith School of AI (2026-27)',
+    summary: [
+      'I lead the cultural side of the Campus Life Club at Zenith School of AI.',
+      'That means taking an event from an idea to the day itself: the plan, the people, and whatever goes wrong an hour before it starts.',
+    ],
+    facts: [['Role', ['Cultural Head', 'Event planning', 'Team lead']]],
+    links: [],
+  },
+  {
     id: 'about',
     title: 'About and contact',
     kind: 'Madhav Monga',
@@ -69,7 +100,6 @@ export const projects = [
     ],
     facts: [
       ['Based in', ['Gurugram, India']],
-      ['Daily tools', ['Claude Code', 'GitHub Copilot']],
       [
         'Skills',
         [

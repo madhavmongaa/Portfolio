@@ -8,6 +8,8 @@ export const STOPS = {
   mandi: { pos: [70, -28], beam: [60, -31] },
   campus: { pos: [-85, -30], beam: [-95, -30] },
   reels: { pos: [0, -100], beam: [0, -110] },
+  angaar: { pos: [-62, 18], beam: [-71, 22] },
+  beatcut: { pos: [52, -80], beam: [58, -88] },
   about: { pos: [0, 105], beam: [0, 114] },
 }
 
@@ -40,7 +42,7 @@ export function height(x, z) {
   h += edge * edge * 0.03
 
   h -= 2.5 * bump(x, z, -32, 34, 20) // WasteWise: shallow basin
-  h += 7 * bump(x, z, 0, -100, 45) // Shorts: the high ridge
+  h += 7 * bump(x, z, 0, -100, 45) // Reels: the high ridge
   h -= 5 * bump(x, z, 0, 105, 35) // About: the low overlook
 
   // Campus Life Club: stepped terraces climbing west, like seating.
