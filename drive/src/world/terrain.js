@@ -46,10 +46,11 @@ export function height(x, z) {
   h -= 5 * bump(x, z, 0, 105, 35) // About: the low overlook
 
   // Campus Life Club: stepped terraces climbing west, like seating.
-  const q = Math.min(4, Math.max(0, (-x - 70) / 6))
+  // They start west of the road, so the road itself stays on smooth ground.
+  const q = Math.min(4, Math.max(0, (-x - 93) / 5))
   const f = q % 1
   const step = Math.floor(q) + smooth(Math.min(1, Math.max(0, (f - 0.75) / 0.25)))
-  h += 1.4 * step * bump(x, z, -90, -30, 30)
+  h += 1.4 * step * bump(x, z, -104, -30, 30)
 
   return h
 }

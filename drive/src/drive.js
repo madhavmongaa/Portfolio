@@ -5,6 +5,7 @@ import {
   STOPS, START, LOOP, SPUR, ROAD_WIDTH, STOP_RADIUS, WORLD_RADIUS, height, gradient,
 } from './world/terrain.js'
 import { createCar, loadModel } from './world/car.js'
+import { createFx } from './world/fx.js'
 
 const BG = 0x0e0f11
 const root = document.documentElement
@@ -298,7 +299,13 @@ export function createDrive({ reduced }) {
   scene.environment = pmrem.fromScene(studio, 0.02).texture
   pmrem.dispose()
   loadModel(parts).then((setTail) => (parts.setTail = setTail)).catch((err) => console.warn('Car model did not load; keeping the stand-in.', err))
-  const state = { x: START.x, z: START.z, th: START.heading, vx: 0, vz: 0, vf: 0 }
+  const state = {
+    x: START.x, z: START.z, th: START.heading, vx: 0, vz: 0, vf: 0, vl: 0,
+    w: 0, // yaw rate
+    drift: false, launch: 0, skid: 0, steer: 0, lean: 0, dip: 0, camTh: START.heading,
+    hand: false, braking: 0, throttle: 0,
+  }
+  const effects = createFx(scene)
 
   // ---------- minimap ----------
   const mapEl = $('map')
@@ -324,7 +331,7 @@ export function createDrive({ reduced }) {
   const coarse = matchMedia('(pointer: coarse)').matches
   hint.textContent = coarse
     ? 'Drag on the left to steer. Pedals on the right.'
-    : 'WASD or arrow keys to drive. Pull up to a light.'
+    : 'WASD or arrow keys to drive, space to drift. Pull up to a light.'
   const touched = () => {
     auto = null
     hint.classList.add('gone')
@@ -387,7 +394,8 @@ export function createDrive({ reduced }) {
       // Park at the stop facing away from where the car was, so the beam is in view.
       const [x, z] = stopList[i].pos
       const th = Math.atan2(x - state.x, z - state.z)
-      Object.assign(state, { x, z, th: Number.isFinite(th) ? th : state.th, vx: 0, vz: 0, vf: 0 })
+      Object.assign(state, { x, z, th: Number.isFinite(th) ? th : state.th, vx: 0, vz: 0, vf: 0, vl: 0, w: 0, drift: false })
+      state.camTh = state.th
       auto = null
       snapCamera = true
     } else auto = i
@@ -471,13 +479,30 @@ export function createDrive({ reduced }) {
     let vf = state.vx * fx + state.vz * fz
     let vl = state.vx * fz - state.vz * fx
 
-    if (throttle) vf += 17 * dt
+    // Drifting: the handbrake, or braking hard into a turn, breaks the rear
+    // loose. Sideways grip then drops and the car turns faster than it travels,
+    // so it slides. Counter-steer and throttle hold the slide; it ends once the
+    // car is pointing where it is going again.
+    if (!state.drift && vf > 9 && (hand || (brake && Math.abs(steer) > 0.5 && vf > 16))) {
+      state.drift = true
+      state.w += steer * 0.45 // the kick that starts the slide
+    }
+    if (state.drift && ((!hand && Math.abs(vl) < 1.1) || vf < 4)) state.drift = false
+
+    // Wheelspin when pulling away hard from a near stop.
+    if (throttle && !state.throttle && vf < 3) state.launch = 0.7
+    state.launch = Math.max(0, state.launch - dt)
+    state.throttle = throttle
+
+    if (throttle) vf += (state.drift ? 12 : 17) * dt * (state.launch > 0 ? 0.8 : 1)
     if (brake) vf -= (vf > 0.5 ? 34 : 9) * dt
-    if (hand) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 30 * dt)
+    if (hand) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 10 * dt)
     const off = offRoad(state.x, state.z)
     vf -= vf * (off ? 1.1 : 0.42) * dt
     vf = THREE.MathUtils.clamp(vf, -9, 32)
-    vl *= Math.exp(-(hand ? 2 : 6.5) * dt) // tyres scrub off sideways speed
+    const scrub = state.drift ? (hand ? 1.2 : throttle ? 0.9 : 1.7) : 6.5
+    vl *= Math.exp(-scrub * dt) // tyres scrub off sideways speed
+    vl = THREE.MathUtils.clamp(vl, -0.75 * Math.abs(vf) - 1, 0.75 * Math.abs(vf) + 1) // no spinning out
 
     state.vx = fx * vf + fz * vl
     state.vz = fz * vf - fx * vl
@@ -488,7 +513,9 @@ export function createDrive({ reduced }) {
     state.vz -= gz * 9 * dt
 
     const grip = THREE.MathUtils.clamp(vf / 8, -1, 1)
-    state.th += steer * grip * (2.0 - 0.8 * Math.min(1, Math.abs(vf) / 32)) * dt
+    const yaw = steer * grip * (state.drift ? 2.1 : 2.0 - 0.8 * Math.min(1, Math.abs(vf) / 32))
+    state.w += (yaw - state.w) * Math.min(1, dt * (state.drift ? 3.5 : 12))
+    state.th += state.w * dt
     state.x += state.vx * dt
     state.z += state.vz * dt
     const r = Math.hypot(state.x, state.z)
@@ -497,8 +524,25 @@ export function createDrive({ reduced }) {
       state.z *= WORLD_RADIUS / r
     }
     state.vf = vf
+    state.vl = vl
+    state.hand = hand
+    state.steer += (steer - state.steer) * Math.min(1, dt * 10)
     state.braking = brake && vf > 0.5 ? 1 : 0
-    for (const w of wheels) w.rotation.x += (vf * dt) / 0.35
+
+    // How hard the tyres are working, 0..1: smoke and marks follow this.
+    const slide = Math.min(1, Math.max(0, Math.abs(vl) - 1.2) / 5)
+    const lock = (brake && vf > 9 ? 0.55 : 0) + (hand && vf > 3 ? 0.7 : 0)
+    const spin = state.launch > 0 && throttle ? 0.8 : 0
+    state.skid = Math.min(1, Math.max(slide, lock, spin))
+
+    for (const w of wheels) {
+      const front = w.userData.front
+      let turn = vf * dt / 0.34
+      if (!front && hand) turn = 0 // handbrake locks the rear
+      else if (!front && (spin || (state.drift && throttle))) turn *= 2.2
+      w.rotation.x += turn
+      if (front) w.rotation.y = state.steer * 0.42
+    }
   }
 
   // ---------- per-frame placement ----------
@@ -517,7 +561,22 @@ export function createDrive({ reduced }) {
     car.position.set(x, y, z)
     const pitch = -Math.atan2(height(x + fx * 1.4, z + fz * 1.4) - height(x - fx * 1.4, z - fz * 1.4), 2.8)
     const roll = Math.atan2(height(x + fz, z - fx) - height(x - fz, z + fx), 2)
-    car.rotation.set(pitch, th, roll)
+    // Weight transfer: the body leans out of a slide and dips under braking.
+    state.lean += (THREE.MathUtils.clamp(state.vl * 0.012 + state.w * state.vf * 0.0015, -0.07, 0.07) - state.lean) * Math.min(1, dt * 6)
+    state.dip += ((state.braking ? 0.025 : state.throttle ? -0.012 : 0) - state.dip) * Math.min(1, dt * 6)
+    car.rotation.set(pitch + state.dip, th, roll + state.lean)
+
+    // Tyre smoke and skid marks from the rear wheels (all four when braking).
+    car.updateMatrixWorld()
+    const smoking = state.skid > 0.05
+    for (let k = 0; k < wheels.length; k++) {
+      const wh = wheels[k]
+      const rear = !wh.userData.front
+      tmp.set(wh.position.x, 0, wh.position.z).applyMatrix4(car.matrixWorld)
+      const on = smoking && (rear || (state.braking && !state.drift))
+      effects.mark(k, tmp, on)
+      if (on && Math.random() < state.skid * (rear ? 1 : 0.4) * dt * 24) effects.puff(tmp, state.vx, state.vz)
+    }
 
     uniforms.uCar.value.set(x + fx * 2, z + fz * 2)
     uniforms.uDir.value.set(fx, fz)
@@ -548,11 +607,19 @@ export function createDrive({ reduced }) {
     // the car: no swing on corners, no zoom at speed, no pull-out at a stop.
     if (!reduced) wide += ((projects[active]?.id === 'reels' ? 1.6 : 1) - wide) * Math.min(1, dt * 1.5)
     // A longer lens from further back: less wide-angle stretch on the car.
-    camTarget.set(x - fx * 15.5 * wide, 0, z - fz * 15.5 * wide)
+    // The camera follows a mix of where the car points and where it is going,
+    // so a drift reads as a slide instead of the world swinging round.
+    const speed = Math.hypot(state.vx, state.vz)
+    const goTh = speed > 3 && state.vf > 0 ? Math.atan2(state.vx, state.vz) : th
+    const camGoal = reduced ? th : th + wrap(goTh - th) * 0.6
+    state.camTh = reduced || snapCamera ? camGoal : state.camTh + wrap(camGoal - state.camTh) * Math.min(1, dt * 4)
+    const cx = Math.sin(state.camTh)
+    const cz = Math.cos(state.camTh)
+    camTarget.set(x - cx * 15.5 * wide, 0, z - cz * 15.5 * wide)
     camTarget.y = Math.max(y + 5.2 * wide, height(camTarget.x, camTarget.z) + 2)
     if (snapCamera || reduced) camera.position.copy(camTarget)
     else camera.position.lerp(camTarget, 1 - Math.exp(-dt * 3.2))
-    look.set(x + fx * 5, y + 1.0, z + fz * 5)
+    look.set(x + cx * 5, y + 1.0, z + cz * 5)
     camera.lookAt(look)
     const fov = baseFov + (reduced ? 0 : 6 * Math.min(1, Math.abs(state.vf) / 32))
     if (Math.abs(fov - camera.fov) > 0.05) {
@@ -603,6 +670,7 @@ export function createDrive({ reduced }) {
     last = now
     step(dt)
     place(dt)
+    effects.update(dt, camera, renderer.domElement.height)
     if (!reduced) uniforms.uTime.value += dt // the dashes stay still for reduced motion
     renderer.render(scene, camera)
 

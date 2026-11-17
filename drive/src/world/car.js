@@ -42,6 +42,8 @@ export function createCar() {
   for (const [x, z] of [[0.9, 1.38], [-0.9, 1.38], [0.9, -1.36], [-0.9, -1.36]]) {
     const w = new THREE.Mesh(wheelGeo, rubber)
     w.position.set(x, 0.35, z)
+    w.rotation.order = 'YXZ'
+    w.userData.front = z > 0
     wheels.push(w)
     stand.add(w)
   }
@@ -61,6 +63,60 @@ export function createCar() {
 
   car.rotation.order = 'YXZ'
   return { car, wheels, stand }
+}
+
+function splitWheels(car, mesh) {
+  car.updateMatrixWorld(true)
+  const toCar = new THREE.Matrix4().copy(car.matrixWorld).invert().multiply(mesh.matrixWorld)
+  const nm = new THREE.Matrix3().getNormalMatrix(toCar)
+  const src = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry
+  const P = src.attributes.position
+  const Nr = src.attributes.normal
+  const U = src.attributes.uv
+  const v = new THREE.Vector3()
+  const buckets = [[], [], [], []]
+  for (let t = 0; t < P.count; t += 3) {
+    let cx = 0
+    let cz = 0
+    for (let k = 0; k < 3; k++) {
+      v.fromBufferAttribute(P, t + k).applyMatrix4(toCar)
+      cx += v.x
+      cz += v.z
+    }
+    buckets[(cx > 0 ? 1 : 0) + (cz > 0 ? 2 : 0)].push(t)
+  }
+  return buckets
+    .filter((b) => b.length)
+    .map((tris) => {
+      const n = tris.length * 3
+      const pos = new Float32Array(n * 3)
+      const nor = Nr ? new Float32Array(n * 3) : null
+      const uv = U ? new Float32Array(n * 2) : null
+      let i = 0
+      for (const t of tris) {
+        for (let k = 0; k < 3; k++, i++) {
+          v.fromBufferAttribute(P, t + k).applyMatrix4(toCar).toArray(pos, i * 3)
+          if (nor) v.fromBufferAttribute(Nr, t + k).applyMatrix3(nm).normalize().toArray(nor, i * 3)
+          if (uv) {
+            uv[i * 2] = U.getX(t + k)
+            uv[i * 2 + 1] = U.getY(t + k)
+          }
+        }
+      }
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+      if (nor) g.setAttribute('normal', new THREE.BufferAttribute(nor, 3))
+      if (uv) g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+      g.computeBoundingBox()
+      const c = g.boundingBox.getCenter(new THREE.Vector3())
+      g.translate(-c.x, -c.y, -c.z)
+      const w = new THREE.Mesh(g, mesh.material)
+      w.position.copy(c)
+      w.rotation.order = 'YXZ'
+      w.userData.front = c.z > 0
+      car.add(w)
+      return w
+    })
 }
 
 const FLIP = Math.PI // the file's nose points the other way from our +z
@@ -90,9 +146,11 @@ export async function loadModel({ car, wheels, stand }) {
   if (size.x > size.z) holder.rotation.y = Math.PI / 2
   holder.rotation.y += FLIP
 
+  let wheelMesh = null
   model.traverse((o) => {
     if (!o.isMesh) return
     const m = o.material
+    if (/whrear/i.test(m.name)) wheelMesh = o
     if (/^Bonnet/.test(m.name)) {
       // Body paint: gloss black.
       m.color.set(0x000000)
@@ -108,8 +166,14 @@ export async function loadModel({ car, wheels, stand }) {
   })
 
   car.remove(stand)
-  wheels.length = 0 // the model's wheels are one piece, so they don't spin
+  wheels.length = 0
   car.add(holder)
+  // The file has all four wheels as one mesh. Cut it into four, each centred
+  // on its own axle, so they can spin and the front pair can steer.
+  if (wheelMesh) {
+    wheels.push(...splitWheels(car, wheelMesh))
+    wheelMesh.visible = false
+  }
 
   // Red taillight glow: a light bar across the rear with a soft halo at each lamp.
   const c = document.createElement('canvas')
