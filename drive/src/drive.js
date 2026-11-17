@@ -386,15 +386,32 @@ export function createDrive({ reduced }) {
     b.addEventListener('pointerleave', set(false))
   }
 
+  // Direction of the road at a point: along the loop in driving order, or
+  // out along the spur.
+  function roadHeading(x, z) {
+    let best = Infinity
+    let pts = loopPts
+    let at = 0
+    for (const list of [loopPts, spurPts]) {
+      list.forEach(([px, pz], k) => {
+        const d = (px - x) ** 2 + (pz - z) ** 2
+        if (d < best) [best, pts, at] = [d, list, k]
+      })
+    }
+    const a = pts[Math.max(0, at - 1)]
+    const b = pts[Math.min(pts.length - 1, at + 1)]
+    return Math.atan2(b[0] - a[0], b[1] - a[1])
+  }
+
   const goTo = (i) => {
     hint.classList.add('gone')
     dismissed = -1
     if (reduced) {
       // No animated trip: cut straight to the stop.
-      // Park at the stop facing away from where the car was, so the beam is in view.
+      // Park at the stop facing along the road, in the direction of travel.
       const [x, z] = stopList[i].pos
-      const th = Math.atan2(x - state.x, z - state.z)
-      Object.assign(state, { x, z, th: Number.isFinite(th) ? th : state.th, vx: 0, vz: 0, vf: 0, vl: 0, w: 0, drift: false })
+      const th = roadHeading(x, z)
+      Object.assign(state, { x, z, th, vx: 0, vz: 0, vf: 0, vl: 0, w: 0, drift: false })
       state.camTh = state.th
       auto = null
       snapCamera = true

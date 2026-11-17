@@ -3,14 +3,18 @@
 // x runs east, z runs south, y is up.
 
 // Where each stop sits on the road, and where its light beam stands beside it.
+// The six loop stops are evenly spaced along the road (about 87 m apart) in
+// the order they are numbered, and About sits at the end of the spur, the
+// same distance from the junction as half that gap. `out` points away from
+// the loop, toward the side the beam stands on.
 export const STOPS = {
-  wastewise: { pos: [-32, 34], beam: [-35, 44] },
-  mandi: { pos: [70, -28], beam: [60, -31] },
-  campus: { pos: [-85, -30], beam: [-95, -30] },
-  reels: { pos: [0, -100], beam: [0, -110] },
-  angaar: { pos: [-62, 18], beam: [-71, 22] },
-  beatcut: { pos: [52, -80], beam: [58, -88] },
-  about: { pos: [0, 105], beam: [0, 114] },
+  wastewise: { pos: [-42.1, 30.3], beam: [-45.8, 39.6], out: [-0.37, 0.93] },
+  mandi: { pos: [-83.1, -39], beam: [-92.6, -42.2], out: [-0.95, -0.32] },
+  reels: { pos: [-21.2, -96.4], beam: [-24.2, -105.9], out: [-0.3, -0.95] },
+  angaar: { pos: [60.4, -75.9], beam: [64.7, -84.9], out: [0.43, -0.9] },
+  beatcut: { pos: [74, -20.9], beam: [81, -28.1], out: [0.7, -0.71] },
+  campus: { pos: [42.2, 29.7], beam: [45.7, 39], out: [0.35, 0.94] },
+  about: { pos: [0, 82], beam: [0, 91] },
 }
 
 export const START = { x: 14, z: 39, heading: -Math.PI / 2 } // facing WasteWise
@@ -21,7 +25,7 @@ export const LOOP = [
   [52, -80], [95, -52], [70, -28], [92, -2], [60, 22],
 ]
 // Dead-end spur south to the overlook.
-export const SPUR = [[0, 40], [4, 62], [-4, 85], [0, 105]]
+export const SPUR = [[0, 40], [3, 54], [-2, 68], [0, 82]]
 
 export const ROAD_WIDTH = 7
 export const STOP_RADIUS = 10
@@ -41,16 +45,19 @@ export function height(x, z) {
   const edge = Math.max(0, Math.hypot(x, z) - 125)
   h += edge * edge * 0.03
 
-  h -= 2.5 * bump(x, z, -32, 34, 20) // WasteWise: shallow basin
-  h += 7 * bump(x, z, 0, -100, 45) // Reels: the high ridge
-  h -= 5 * bump(x, z, 0, 105, 35) // About: the low overlook
+  const at = (id, k, r) => bump(x, z, STOPS[id].pos[0], STOPS[id].pos[1], r) * k
+  h -= at('wastewise', 2.5, 20) // a shallow basin
+  h += at('reels', 7, 45) // the high ridge
+  h -= at('about', 5, 28) // the low overlook
 
-  // Campus Life Club: stepped terraces climbing west, like seating.
-  // They start west of the road, so the road itself stays on smooth ground.
-  const q = Math.min(4, Math.max(0, (-x - 93) / 5))
+  // Campus Life Club: stepped terraces climbing away from the road, like seating.
+  // They start past the road's edge, so the road itself stays on smooth ground.
+  const c = STOPS.campus
+  const away = (x - c.pos[0]) * c.out[0] + (z - c.pos[1]) * c.out[1]
+  const q = Math.min(4, Math.max(0, (away - 6) / 5))
   const f = q % 1
   const step = Math.floor(q) + smooth(Math.min(1, Math.max(0, (f - 0.75) / 0.25)))
-  h += 1.4 * step * bump(x, z, -104, -30, 30)
+  h += 1.4 * step * bump(x, z, c.pos[0] + c.out[0] * 16, c.pos[1] + c.out[1] * 16, 30)
 
   return h
 }
