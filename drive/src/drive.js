@@ -11,6 +11,13 @@ import { createRoutes } from './world/route.js'
 import { createStuds, createGates, createMist } from './world/scenery.js'
 
 const BG = 0x0e0f11
+// Gearbox: five gears and reverse. RATIO is engine rpm per m/s in each gear;
+// top speed (32 m/s) lands just under the shift point in fifth.
+const IDLE = 800
+const REDLINE = 7000
+const SHIFT_UP = 6600
+const SHIFT_DOWN = 3000
+const RATIO = [3.0, 2.0, 1.5, 1.2, 1.0].map((r) => r * 206)
 const COUNT = projects.length
 const root = document.documentElement
 const $ = (id) => document.getElementById(id)
@@ -347,7 +354,7 @@ export function createDrive({ reduced }) {
     x: START.x, z: START.z, th: START.heading, vx: 0, vz: 0, vf: 0, vl: 0,
     w: 0, // yaw rate
     drift: false, launch: 0, skid: 0, steer: 0, lean: 0, dip: 0, camTh: START.heading,
-    hand: false, braking: 0, throttle: 0,
+    hand: false, braking: 0, throttle: 0, gear: 1, rpm: IDLE, shift: 0, corner: 0, off: false,
   }
   const effects = createFx(scene)
 
@@ -667,7 +674,7 @@ export function createDrive({ reduced }) {
     state.launch = Math.max(0, state.launch - dt)
     state.throttle = throttle
 
-    if (throttle) vf += (state.drift ? 12 : 17) * dt * (state.launch > 0 ? 0.8 : 1)
+    if (throttle && !state.shift) vf += (state.drift ? 12 : 17) * dt * (state.launch > 0 ? 0.8 : 1)
     if (brake) vf -= (vf > 0.5 ? 34 : 9) * dt
     if (hand) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 10 * dt)
     const off = offRoad(state.x, state.z)
@@ -708,6 +715,29 @@ export function createDrive({ reduced }) {
     const lock = (brake && vf > 9 ? 0.55 : 0) + (hand && vf > 3 ? 0.7 : 0)
     const spin = state.launch > 0 && throttle ? 0.8 : 0
     state.skid = Math.min(1, Math.max(slide, lock, spin))
+    state.corner = Math.abs(vf * state.w) // sideways load, m/s²
+
+    // Gearbox. Changes up at the shift point under power (with a short torque
+    // cut), down when the revs sag. The engine speed follows the wheels, except
+    // pulling away in first, when the clutch slips and the revs run ahead.
+    const v = Math.abs(vf)
+    state.shift = Math.max(0, state.shift - dt)
+    if (vf < -0.3) state.gear = -1
+    else if (state.gear < 1) state.gear = 1
+    if (state.gear > 0 && !state.shift) {
+      const wheelRpm = v * RATIO[state.gear - 1]
+      // Shift when the needle itself reaches the shift point, so it never changes early.
+      if (state.gear < 5 && state.rpm >= SHIFT_UP && wheelRpm > SHIFT_UP - 400 && (throttle || wheelRpm > REDLINE)) {
+        state.gear++
+        state.shift = 0.16
+      } else if (state.gear > 1 && wheelRpm < SHIFT_DOWN) state.gear--
+    }
+    let target = v * RATIO[Math.abs(state.gear) - 1]
+    if (throttle && Math.abs(state.gear) === 1) target = Math.max(target, 3000 + 200 * v)
+    if (spin) target = Math.max(target, 6200) // wheelspin flare
+    if (!throttle && v < 1) target = IDLE
+    target = THREE.MathUtils.clamp(target, IDLE, REDLINE + 150)
+    state.rpm += (target - state.rpm) * Math.min(1, dt * (state.shift ? 22 : 14))
 
     for (const w of wheels) {
       const front = w.userData.front
@@ -774,6 +804,60 @@ export function createDrive({ reduced }) {
   let baseFov = 36
   let wide = 1
 
+  // ---------- rev meter ----------
+  // A small arc gauge to the left of the minimap: 0 to 8,000 rpm with the
+  // redline marked, the gear in the middle and the speed under it. The gear
+  // turns amber at the shift point.
+  const tach = $('tach')
+  {
+    const A0 = 225 // degrees, at 0 rpm (measured clockwise from up, mirrored)
+    const SWEEP = 270
+    const pt = (rpm, r) => {
+      const a = ((A0 - (rpm / 8000) * SWEEP) * Math.PI) / 180
+      return [60 + r * Math.cos(a), 60 - r * Math.sin(a)]
+    }
+    const arc = (a, b, r) => {
+      const [x0, y0] = pt(a, r)
+      const [x1, y1] = pt(b, r)
+      const large = ((b - a) / 8000) * SWEEP > 180 ? 1 : 0
+      return `M${x0.toFixed(1)} ${y0.toFixed(1)}A${r} ${r} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`
+    }
+    let ticks = ''
+    for (let k = 0; k <= 8; k++) {
+      const [x0, y0] = pt(k * 1000, 50)
+      const [x1, y1] = pt(k * 1000, 43)
+      const [lx, ly] = pt(k * 1000, 34)
+      ticks += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}"/>`
+      ticks += `<text x="${lx.toFixed(1)}" y="${(ly + 3).toFixed(1)}">${k}</text>`
+    }
+    tach.innerHTML = `<svg viewBox="0 0 120 120">
+      <path class="track" d="${arc(0, 8000, 50)}"/>
+      <path class="red" d="${arc(REDLINE - 500, 8000, 50)}"/>
+      <g class="ticks">${ticks}</g>
+      <line class="needle" x1="60" y1="60" x2="60" y2="14"/>
+      <circle class="hub" cx="60" cy="60" r="3"/>
+      <text class="gear" x="60" y="88">1</text>
+      <text class="speed" x="60" y="104">0 km/h</text>
+    </svg>`
+  }
+  const needle = tach.querySelector('.needle')
+  const gearText = tach.querySelector('.gear')
+  const speedText = tach.querySelector('.speed')
+  let tachShown = ''
+  function tachFrame() {
+    const deg = -135 + (Math.min(state.rpm, 8000) / 8000) * 270
+    needle.setAttribute('transform', `rotate(${deg.toFixed(1)} 60 60)`)
+    const g = state.gear < 0 ? 'R' : String(state.gear)
+    const kmh = Math.round(Math.abs(state.vf) * 3.6)
+    const hot = state.rpm > SHIFT_UP - 300 && state.gear > 0 && state.gear < 5
+    const key = g + kmh + hot
+    if (key === tachShown) return
+    tachShown = key
+    gearText.textContent = g
+    speedText.textContent = `${kmh} km/h`
+    gearText.classList.toggle('hot', hot)
+  }
+
   function place(dt) {
     const { x, z, th } = state
     const fx = Math.sin(th)
@@ -804,6 +888,7 @@ export function createDrive({ reduced }) {
     uniforms.uBrake.value += (state.braking - uniforms.uBrake.value) * Math.min(1, dt * 12)
     parts.api?.tail(uniforms.uBrake.value)
     parts.api?.frame(dt, state.vf)
+    tachFrame()
 
     // Which stop are we at? Leave radius is wider than enter radius so it doesn't flicker.
     let now = -1
@@ -926,7 +1011,7 @@ export function createDrive({ reduced }) {
     last = now
     step(dt)
     place(dt)
-    audio.drive(dt, { speed: state.vf, throttle: state.throttle, skid: state.skid, off: state.off })
+    audio.drive(dt, { ...state, IDLE, REDLINE })
     effects.update(dt, camera, renderer.domElement.height)
     studScale.value = renderer.domElement.height / (2 * Math.tan((camera.fov * Math.PI) / 360))
     if (!reduced) uniforms.uTime.value += dt // the dashes stay still for reduced motion

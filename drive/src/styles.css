@@ -109,12 +109,23 @@ html.drive.ready, html.drive.ready body { overflow: hidden; height: 100%; }
 }
 #map .stop:hover .lbl, #map .stop:focus-visible .lbl { opacity: 1; }
 
+#tach { position: absolute; right: calc(var(--pad) + 132px + 20px); bottom: calc(env(safe-area-inset-bottom) + 18px); width: 112px; height: 112px; pointer-events: none; }
+#tach svg { width: 100%; height: 100%; overflow: visible; }
+#tach .track { fill: none; stroke: var(--line); stroke-width: 2; }
+#tach .red { fill: none; stroke: #d2452c; stroke-width: 3; }
+#tach .ticks line { stroke: var(--dim); stroke-width: 1.2; }
+#tach .ticks text { font-family: var(--mono); font-size: 8px; fill: var(--dim); text-anchor: middle; }
+#tach .needle { stroke: var(--amber); stroke-width: 2; stroke-linecap: round; }
+#tach .hub { fill: var(--amber); }
+#tach .gear { font-family: var(--mono); font-size: 20px; fill: var(--text); text-anchor: middle; }
+#tach .gear.hot { fill: var(--amber); }
+#tach .speed { font-family: var(--mono); font-size: 9px; fill: var(--dim); text-anchor: middle; }
 #hint { position: absolute; left: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 58px); color: var(--dim); transition: opacity 0.6s; }
 
 /* next-stop guide and progress */
 #guide {
   position: absolute; left: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 20px);
-  max-width: calc(100% - 2 * var(--pad) - 156px);
+  max-width: calc(100% - 2 * var(--pad) - 156px - 132px);
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--text);
 }
 #guide .arrow { width: 14px; height: 14px; flex: none; fill: var(--amber); }
@@ -143,6 +154,7 @@ html.drive.ready, html.drive.ready body { overflow: hidden; height: 100%; }
   #hint { bottom: calc(env(safe-area-inset-bottom) + 176px); }
   #guide { bottom: calc(env(safe-area-inset-bottom) + 132px); max-width: calc(100% - 2 * var(--pad)); }
   #progress { bottom: auto; top: calc(env(safe-area-inset-top) + 160px); width: 96px; }
+  #tach { bottom: auto; top: calc(env(safe-area-inset-top) + 56px); right: calc(var(--pad) + 96px + 12px); width: 92px; height: 92px; }
 }
 @media (max-width: 720px) {
   #panel {

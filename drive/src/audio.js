@@ -38,7 +38,6 @@ export function createAudio() {
   let timer = 0
   let step = 0
   let nextT = 0
-  let rpm = 0
   let dimmed = false
 
   // ---------- setup ----------
@@ -200,16 +199,36 @@ export function createAudio() {
     const t = ctx.currentTime + 0.02
     for (const o of banks) o.start(t) // same start, same automation: they stay in phase
 
-    // Tyres: two narrow bands of noise make the squeal.
+    // Tyre screech: a pair of rough, wavering tones over a band of hiss,
+    // the sound of rubber stick-slipping across tarmac.
     const squeal = gain(0, sfx)
+    const sqTone = filter('bandpass', 1000, 3)
+    sqTone.connect(squeal)
+    const sqOsc = [0, 1].map((i) => {
+      const o = ctx.createOscillator()
+      o.type = 'sawtooth'
+      o.frequency.value = i ? 1420 : 960
+      o.connect(gain(i ? 0.5 : 1, sqTone))
+      o.start()
+      return o
+    })
     const n1 = noiseSrc()
-    const bp1 = filter('bandpass', 1150, 9)
-    const bp2 = filter('bandpass', 2400, 12)
+    const bp1 = filter('bandpass', 1200, 6)
+    const bp2 = filter('bandpass', 2500, 10)
     n1.connect(bp1)
     n1.connect(bp2)
-    bp1.connect(squeal)
-    bp2.connect(gain(0.6, squeal))
+    bp1.connect(gain(0.9, squeal))
+    bp2.connect(gain(0.5, squeal))
     n1.start()
+    // Chatter: the rubber grabs and lets go a few dozen times a second.
+    const chatter = gain(0.65, sfx)
+    squeal.disconnect()
+    squeal.connect(chatter)
+    const ch = ctx.createOscillator()
+    ch.type = 'square'
+    ch.frequency.value = 23
+    ch.connect(gain(0.35, chatter.gain))
+    ch.start()
 
     const wind = gain(0, sfx)
     const n2 = noiseSrc()
@@ -225,49 +244,43 @@ export function createAudio() {
     rl.connect(rumble)
     n3.start(0, 1.3)
 
-    return { body, tone, drive, banks, raspAmt, squeal, bp1, wind, rumble, gear: 0, cut: 0 }
+    return { body, tone, drive, banks, raspAmt, squeal, sqOsc, sqTone, ch, bp1, wind, rumble, gear: 1 }
   }
 
-  const GEARS = [0, 8, 14, 20, 26, 33]
-  const IDLE = 800
-  const REDLINE = 7000
-  // Called every frame with the car's state.
-  function drive(dt, { speed, throttle, skid, off }) {
+  let screech = 0
+  // Called every frame with the car's state; the gearbox lives in drive.js.
+  function drive(dt, { vf, throttle, skid, corner, off, rpm: RPM, gear, shift, IDLE, REDLINE }) {
     if (!live) return
-    const v = Math.abs(speed)
-    let k = 0
-    while (k < 4 && v > GEARS[k + 1]) k++
-    const frac = Math.min(1, (v - GEARS[k]) / (GEARS[k + 1] - GEARS[k]))
-    let target = v < 0.5 ? (throttle ? 0.5 : 0) : (k === 0 ? 0.08 : 0.3) + (k === 0 ? 0.84 : 0.64) * frac
-    if (!throttle && v >= 0.5) target *= 0.9
-    if (throttle && skid > 0.5 && v < 10) target = 0.92 // wheelspin
+    const v = Math.abs(vf)
     const t = ctx.currentTime
-    // Upshift under power: a split-second ignition cut with a crack from the pipes.
-    if (k > eng.gear && throttle) {
-      eng.cut = 0.09
-      bang(t + 0.02, 0.5)
-    }
-    eng.gear = k
-    eng.cut = Math.max(0, eng.cut - dt)
-    rpm += (target - rpm) * Math.min(1, dt * (target > rpm ? 6 : 3.5))
+    const r = (RPM - IDLE) / (REDLINE - IDLE)
+    // Upshift under power: a crack from the pipes as the ignition cuts.
+    if (gear > eng.gear && throttle) bang(t + 0.02, 0.5)
+    eng.gear = gear
 
     // Near idle a lumpy cam makes the revs hunt a little.
-    const lope = rpm < 0.15 ? (Math.random() - 0.5) * 0.06 : 0
-    const RPM = IDLE + (rpm + lope) * (REDLINE - IDLE)
-    const cyc = RPM / 120 // engine cycles per second (one cycle is two turns)
-    for (const o of eng.banks) o.frequency.setTargetAtTime(cyc, t, 0.025)
-    const load = eng.cut > 0 ? 0 : throttle
-    eng.tone.frequency.setTargetAtTime(380 + rpm * 1400 + load * (900 + rpm * 2600), t, 0.05)
+    const lope = r < 0.08 ? 1 + (Math.random() - 0.5) * 0.05 : 1
+    const cyc = (RPM * lope) / 120 // engine cycles per second (one cycle is two turns)
+    for (const o of eng.banks) o.frequency.setTargetAtTime(cyc, t, 0.02)
+    const load = shift > 0 ? 0 : throttle
+    eng.tone.frequency.setTargetAtTime(380 + r * 1400 + load * (900 + r * 2600), t, 0.05)
     eng.drive.gain.setTargetAtTime(1 + load * 2.2, t, 0.05)
-    eng.raspAmt.gain.setTargetAtTime(0.05 + load * (0.25 + rpm * 0.35), t, 0.05)
-    const level = eng.cut > 0 ? 0.04 : 0.09 + 0.06 * rpm + 0.09 * load
-    eng.body.gain.setTargetAtTime(level, t, eng.cut > 0 ? 0.01 : 0.06)
+    eng.raspAmt.gain.setTargetAtTime(0.05 + load * (0.25 + r * 0.35), t, 0.05)
+    const level = shift > 0 ? 0.045 : 0.09 + 0.06 * r + 0.09 * load
+    eng.body.gain.setTargetAtTime(level, t, shift > 0 ? 0.01 : 0.06)
 
     // Off the throttle at speed the pipes pop and crackle on the overrun.
-    if (!throttle && rpm > 0.35 && v > 8 && Math.random() < dt * 7) bang(t + Math.random() * 0.03, 0.15 + Math.random() * 0.3)
+    if (!throttle && r > 0.35 && v > 8 && Math.random() < dt * 7) bang(t + Math.random() * 0.03, 0.15 + Math.random() * 0.3)
 
-    const sq = v > 2 ? skid : 0
-    eng.squeal.gain.setTargetAtTime(sq * 0.11, t, 0.05)
+    // Screech: sliding, locked or spinning tyres, and hard cornering near the limit.
+    const want = v > 2.5 ? Math.max(skid, Math.min(1, Math.max(0, corner - 11) / 12) * 0.75) : 0
+    screech += (want - screech) * Math.min(1, dt * (want > screech ? 14 : 6))
+    eng.squeal.gain.setTargetAtTime(screech * screech * 0.16, t, 0.03)
+    const wob = 1 + (Math.random() - 0.5) * 0.09
+    eng.sqOsc[0].frequency.setTargetAtTime((880 + screech * 260) * wob, t, 0.02)
+    eng.sqOsc[1].frequency.setTargetAtTime((1300 + screech * 380) * wob, t, 0.02)
+    eng.sqTone.frequency.setTargetAtTime(1000 + screech * 300, t, 0.05)
+    eng.ch.frequency.setTargetAtTime(16 + v * 0.5 + Math.random() * 6, t, 0.03)
     eng.bp1.frequency.setTargetAtTime(1050 + Math.random() * 220 + v * 6, t, 0.02)
     eng.wind.gain.setTargetAtTime(Math.min(1, v / 32) ** 2 * 0.06, t, 0.2)
     eng.rumble.gain.setTargetAtTime(off ? Math.min(1, v / 8) * 0.22 : 0, t, 0.1)
