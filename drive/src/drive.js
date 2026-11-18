@@ -600,6 +600,125 @@ export function createDrive({ reduced }) {
     return best > (ROAD_WIDTH * 0.5 + 0.8) ** 2
   }
 
+  // ---------- lane keeping ----------
+  // A quiet steering assist. It looks a little way down the road and steers
+  // for that point, holding whatever line across the road the driver has
+  // chosen, and only pulls back near the edges. The driver's own steering is
+  // added on top. Holding full lock toward the edge for 1.2 s is read as
+  // meaning it: the assist lets go and the car can leave the road. It takes
+  // over again once the car is back on the tarmac, or when the driver lets go
+  // of the wheel for two seconds within reach of the road.
+  const lane = { a: 0, push: 0, idle: 0, override: false, cap: Infinity }
+  if (import.meta.env.DEV) window.__drive = { state, lane, keys, offRoad: (x, z) => offRoad(x, z), tick: (dt) => (step(dt), place(dt)) }
+  const LANE_EDGE = ROAD_WIDTH / 2 - 1.1 // furthest the held line may sit from the centre
+  function nearestRoad(x, z) {
+    let best = Infinity
+    let pts = loopPts
+    let k = 0
+    for (const list of [loopPts, spurPts]) {
+      for (let i = 0; i < list.length; i++) {
+        const d = (list[i][0] - x) ** 2 + (list[i][1] - z) ** 2
+        if (d < best) [best, pts, k] = [d, list, i]
+      }
+    }
+    return { pts, k, dist: Math.sqrt(best) }
+  }
+  function sample(pts, k) {
+    if (pts === loopPts) {
+      const n = loopPts.length - 1 // the last sample repeats the first
+      return pts[((k % n) + n) % n]
+    }
+    return pts[THREE.MathUtils.clamp(k, 0, pts.length - 1)]
+  }
+  function keepLane(driver, dt, hand) {
+    const v = state.vf
+    const road = nearestRoad(state.x, state.z)
+    const { pts, k } = road
+    // Road direction here, as sample order; and which way along it we face.
+    const a = sample(pts, k - 1)
+    const b = sample(pts, k + 1)
+    let tx = b[0] - a[0]
+    let tz = b[1] - a[1]
+    const tl = Math.hypot(tx, tz) || 1
+    tx /= tl
+    tz /= tl
+    const dir = tx * Math.sin(state.th) + tz * Math.cos(state.th) >= 0 ? 1 : -1
+    // Signed offset from the centre line, kept inside the edges.
+    const c = pts[k]
+    const off = (state.x - c[0]) * tz - (state.z - c[1]) * tx
+    const hold = THREE.MathUtils.clamp(off, -LANE_EDGE, LANE_EDGE) * 0.8 // drifts gently back toward the middle
+    // Aim point: the same line, further down the road the faster we go.
+    const steps = Math.round((5 + Math.abs(v) * 0.28) / 1.5) // short, so it doesn't cut the inside of bends
+    const p = sample(pts, k + dir * steps)
+    const q = sample(pts, k + dir * (steps + 1))
+    let ux = q[0] - p[0]
+    let uz = q[1] - p[1]
+    const ul = Math.hypot(ux, uz) || 1
+    ux = (ux / ul) * dir
+    uz = (uz / ul) * dir
+    // Same side-vector convention as `off`, flipped back for direction of travel.
+    const ax = p[0] + uz * hold * dir
+    const az = p[1] - ux * hold * dir
+    // Steer by where the car is actually going, not where its nose points, so a
+    // car sliding wide in a fast bend is still brought round.
+    const sp = Math.hypot(state.vx, state.vz)
+    const course = sp > 4 && v > 0 ? Math.atan2(state.vx, state.vz) : state.th
+    const assist = THREE.MathUtils.clamp(wrap(Math.atan2(ax - state.x, az - state.z) - course) * 2.6, -1, 1)
+
+    // Does the driver mean to leave? Full lock against the assist, at the edge.
+    const edge = THREE.MathUtils.smoothstep(Math.abs(off), LANE_EDGE - 2.5, LANE_EDGE + 0.5)
+    const atEdge = edge > 0.2
+    // Positive steer moves the car toward +off when facing along the samples
+    // (dir 1), so `excess` is how much harder than the assist the driver is
+    // steering toward the nearer edge.
+    const excess = (driver - assist) * Math.sign(off) * dir
+    const fighting = Math.abs(driver) > 0.85 && excess > 0.5
+    lane.push = atEdge && fighting ? lane.push + dt : 0 // must be one unbroken hold
+    if (lane.push > 1.2) lane.override = true
+    // Let go of the wheel for two seconds near the road and it guides you back.
+    lane.idle = Math.abs(driver) < 0.1 ? lane.idle + dt : 0
+    if (lane.override && lane.idle > 2 && road.dist < ROAD_WIDTH / 2 + 14) lane.override = false
+    const onRoad = road.dist < ROAD_WIDTH / 2 - 0.4
+    if (lane.override && onRoad && Math.abs(off) < LANE_EDGE - 0.8 && Math.abs(driver) < 0.5) lane.override = false
+
+    // How much help to give: none at a crawl, in reverse, when overridden or
+    // well off the road; less while drifting, so slides stay the driver's.
+    let want = THREE.MathUtils.smoothstep(v, 3, 9)
+    if (!onRoad && v > 0.5) want = Math.max(want, 0.8) // crawling back out of a ditch
+    if (lane.override || road.dist > ROAD_WIDTH / 2 + 14) want = 0
+    if (state.drift || hand) want *= 0.3
+    lane.a += (want - lane.a) * Math.min(1, dt * (want > lane.a ? 3 : 6))
+
+    // Corner speed: for each bend in the next 80 m, the fastest the car can
+    // take it (the yaw rate it needs, v·κ, against what the steering gives, with
+    // a margin), and from that the fastest it can be going now and still slow
+    // down in time. Over that, lift; well over, brake.
+    lane.cap = Infinity
+    if (lane.a > 0.3 && !state.drift && v > 10) {
+      const span = 54
+      const heads = []
+      let prev = null
+      for (let i = 0; i <= span; i++) {
+        const p0 = sample(pts, k + dir * i)
+        const p1 = sample(pts, k + dir * (i + 1))
+        const h = Math.atan2(p1[0] - p0[0], p1[1] - p0[1])
+        if (prev !== null) heads.push(Math.abs(wrap(h - prev)))
+        prev = h
+      }
+      for (let i = 0; i + 4 <= heads.length; i++) {
+        const kappa = (heads[i] + heads[i + 1] + heads[i + 2] + heads[i + 3]) / 6
+        const corner = 1.3 / (kappa + 0.013)
+        lane.cap = Math.min(lane.cap, Math.sqrt(corner * corner + 2 * 11 * i * 1.5))
+      }
+    }
+    // Near the edge, steering that pushes outward against the assist counts
+    // for less (until it has been held long enough to be an override). Taps
+    // at speed then can't throw the car off the road.
+    const outward = excess > 0.1
+    const scale = (1 - 0.45 * lane.a) * (outward ? 1 - 0.85 * edge * lane.a * (1 - Math.min(1, lane.push / 1.2)) : 1) * (1 - 0.4 * lane.a * THREE.MathUtils.smoothstep(v, 15, 40))
+    return driver * scale + assist * lane.a
+  }
+
   function step(dt) {
     let throttle = keys.has('KeyW') || keys.has('ArrowUp') || touch.gas ? 1 : 0
     let brake = keys.has('KeyS') || keys.has('ArrowDown') || touch.brake ? 1 : 0
@@ -653,6 +772,12 @@ export function createDrive({ reduced }) {
       })
     }
     if (glided >= 0 && Math.hypot(stopList[glided].pos[0] - state.x, stopList[glided].pos[1] - state.z) > 34) glided = -1
+    let assistBrake = false
+    if (!auto) {
+      steer = keepLane(steer, dt, hand)
+      if (state.vf > lane.cap) throttle = 0
+      assistBrake = state.vf > lane.cap + 3
+    }
     steer = THREE.MathUtils.clamp(steer, -1, 1)
 
     // Split velocity into along-the-car and sideways parts.
@@ -677,6 +802,7 @@ export function createDrive({ reduced }) {
     state.launch = Math.max(0, state.launch - dt)
     state.throttle = throttle
 
+    if (assistBrake) vf -= 12 * dt // the assist trimming speed for a bend
     if (throttle && !state.shift) vf += (state.drift ? 12 : 17) * dt * (state.launch > 0 ? 0.8 : 1)
     if (brake) vf -= (vf > 0.5 ? 34 : 9) * dt
     if (hand) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 10 * dt)
