@@ -282,7 +282,7 @@ export function createAudio() {
     eng.sqTone.frequency.setTargetAtTime(1000 + screech * 300, t, 0.05)
     eng.ch.frequency.setTargetAtTime(16 + v * 0.5 + Math.random() * 6, t, 0.03)
     eng.bp1.frequency.setTargetAtTime(1050 + Math.random() * 220 + v * 6, t, 0.02)
-    eng.wind.gain.setTargetAtTime(Math.min(1, v / 32) ** 2 * 0.06, t, 0.2)
+    eng.wind.gain.setTargetAtTime(Math.min(1, v / 50) ** 2 * 0.07, t, 0.2)
     eng.rumble.gain.setTargetAtTime(off ? Math.min(1, v / 8) * 0.22 : 0, t, 0.1)
   }
 

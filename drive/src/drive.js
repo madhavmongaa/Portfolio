@@ -11,13 +11,16 @@ import { createRoutes } from './world/route.js'
 import { createStuds, createGates, createMist } from './world/scenery.js'
 
 const BG = 0x0e0f11
-// Gearbox: five gears and reverse. RATIO is engine rpm per m/s in each gear;
-// top speed (32 m/s) lands just under the shift point in fifth.
+// Gearbox: seven gears and reverse. RATIO is engine rpm per m/s in each gear,
+// stepping down evenly so every upshift lands near 5,100 rpm; top speed
+// (50 m/s, 180 km/h) sits just under the shift point in seventh.
 const IDLE = 800
 const REDLINE = 7000
 const SHIFT_UP = 6600
 const SHIFT_DOWN = 3000
-const RATIO = [3.0, 2.0, 1.5, 1.2, 1.0].map((r) => r * 206)
+const TOP = 50
+const GEARS = 7
+const RATIO = Array.from({ length: GEARS }, (_, k) => 618 * (132 / 618) ** (k / (GEARS - 1)))
 const COUNT = projects.length
 const root = document.documentElement
 const $ = (id) => document.getElementById(id)
@@ -679,8 +682,8 @@ export function createDrive({ reduced }) {
     if (hand) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 10 * dt)
     const off = offRoad(state.x, state.z)
     state.off = off
-    vf -= vf * (off ? 1.1 : 0.42) * dt
-    vf = THREE.MathUtils.clamp(vf, -9, 32)
+    vf -= vf * (off ? 1.1 : 0.3) * dt
+    vf = THREE.MathUtils.clamp(vf, -9, TOP)
     const scrub = state.drift ? (hand ? 1.2 : throttle ? 0.9 : 1.7) : 6.5
     vl *= Math.exp(-scrub * dt) // tyres scrub off sideways speed
     vl = THREE.MathUtils.clamp(vl, -0.75 * Math.abs(vf) - 1, 0.75 * Math.abs(vf) + 1) // no spinning out
@@ -694,7 +697,7 @@ export function createDrive({ reduced }) {
     state.vz -= gz * 9 * dt
 
     const grip = THREE.MathUtils.clamp(vf / 8, -1, 1)
-    const yaw = steer * grip * (state.drift ? 2.1 : 2.0 - 0.8 * Math.min(1, Math.abs(vf) / 32))
+    const yaw = steer * grip * (state.drift ? 2.1 : 2.0 - 1.0 * Math.min(1, Math.abs(vf) / TOP))
     state.w += (yaw - state.w) * Math.min(1, dt * (state.drift ? 3.5 : 12))
     state.th += state.w * dt
     state.x += state.vx * dt
@@ -727,7 +730,7 @@ export function createDrive({ reduced }) {
     if (state.gear > 0 && !state.shift) {
       const wheelRpm = v * RATIO[state.gear - 1]
       // Shift when the needle itself reaches the shift point, so it never changes early.
-      if (state.gear < 5 && state.rpm >= SHIFT_UP && wheelRpm > SHIFT_UP - 400 && (throttle || wheelRpm > REDLINE)) {
+      if (state.gear < GEARS && state.rpm >= SHIFT_UP && wheelRpm > SHIFT_UP - 400 && (throttle || wheelRpm > REDLINE)) {
         state.gear++
         state.shift = 0.16
       } else if (state.gear > 1 && wheelRpm < SHIFT_DOWN) state.gear--
@@ -849,7 +852,7 @@ export function createDrive({ reduced }) {
     needle.setAttribute('transform', `rotate(${deg.toFixed(1)} 60 60)`)
     const g = state.gear < 0 ? 'R' : String(state.gear)
     const kmh = Math.round(Math.abs(state.vf) * 3.6)
-    const hot = state.rpm > SHIFT_UP - 300 && state.gear > 0 && state.gear < 5
+    const hot = state.rpm > SHIFT_UP - 300 && state.gear > 0 && state.gear < GEARS
     const key = g + kmh + hot
     if (key === tachShown) return
     tachShown = key
@@ -934,7 +937,7 @@ export function createDrive({ reduced }) {
     else camera.position.lerp(camTarget, 1 - Math.exp(-dt * 3.2))
     look.set(x + cx * 5, y + 1.0, z + cz * 5)
     camera.lookAt(look)
-    const fov = baseFov + (reduced ? 0 : 6 * Math.min(1, Math.abs(state.vf) / 32))
+    const fov = baseFov + (reduced ? 0 : 8 * Math.min(1, Math.abs(state.vf) / TOP))
     if (Math.abs(fov - camera.fov) > 0.05) {
       camera.fov = fov
       camera.updateProjectionMatrix()
